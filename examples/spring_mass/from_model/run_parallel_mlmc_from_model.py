@@ -5,6 +5,7 @@ from mpi4py import MPI
 from spring_mass_model import SpringMassModel
 from MLMCPy.input import RandomInput
 from MLMCPy.mlmc import MLMCSimulator
+from MLMCPy.mlmc import MLMCSimulator2
 
 '''
 This script demonstrates MLMCPy for simulating a spring-mass system with a 
@@ -13,6 +14,9 @@ displacement using multi-level Monte Carlo. Here, we use Model and RandomInput
 objects with functional forms as inputs to MLMCPy. See the
 /examples/spring_mass/from_data/ for an example of using precomputed data
 in files as inputs.
+
+For 8 processes, run from command line with something like:
+mpiexec -n 8 python run_parallel_mlmc_from_model.py 
 '''
 
 # Set up MPI communicator for running in parallel
@@ -97,6 +101,7 @@ if rank == 0:
     print "\n################# TEST 2 ###################"
     par_mc_total_cost = timeit.default_timer()
 
+stiffness_distribution.reset_sampling()
 model = SpringMassModel(mass=1.5, time_step=high_timestep)
 
 if rank == 0:
@@ -197,6 +202,8 @@ comm.Barrier()
 # Step 4: PARALLEL - Original MLMCPy Monte Carlo Simulation
 # Use to generate a baseline reference for time and accuracy
 
+stiffness_distribution.reset_sampling()
+
 if rank == 0:
     print "\n################# TEST 4 ###################"
     print "Starting Parallel MLMCPy comparisons..."
@@ -248,6 +255,8 @@ comm.Barrier()
 # Step 5: PARALLEL - Original MLMCPy Monte Carlo Simulation
 # Use to generate a baseline reference of parallel timing
 
+stiffness_distribution.reset_sampling()
+
 if rank == 0:
     print "\n################# TEST 5 ###################"
     NEW_mlmc_total_cost = timeit.default_timer()
@@ -261,7 +270,7 @@ NEW_model_level3 = SpringMassModel(mass=1.5, time_step=high_timestep)
 NEW_models = [model_level1, model_level2, model_level3]
 
 # Initialize MLMC & predict max displacement to specified precision
-NEW_mlmc_simulator = MLMCSimulator(stiffness_distribution, NEW_models)
+NEW_mlmc_simulator = MLMCSimulator2(stiffness_distribution, NEW_models)
 
 NEW_local_mlmc_cost = timeit.default_timer()
 

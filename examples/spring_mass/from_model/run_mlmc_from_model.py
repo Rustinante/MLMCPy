@@ -48,9 +48,9 @@ print "Target precision: ", precision_mc
 
 # Step 3 - Initialize spring-mass models for MLMC. Here using three levels 
 # with MLMC defined by different time steps
-model_level1 = SpringMassModel(mass=1.5, time_step=1.0)
-model_level2 = SpringMassModel(mass=1.5, time_step=0.1)
-model_level3 = SpringMassModel(mass=1.5, time_step=0.01)
+model_level1 = SpringMassModel(mass=1.5, time_step=0.5)
+model_level2 = SpringMassModel(mass=1.5, time_step=0.05)
+model_level3 = SpringMassModel(mass=1.5, time_step=0.0001)
 
 models = [model_level1, model_level2, model_level3]
 
@@ -59,10 +59,12 @@ mlmc_simulator = MLMCSimulator(stiffness_distribution, models)
 
 start_mlmc = timeit.default_timer()
 
+precision_mc = 0.0017089012209586753 / 100
+
 [estimates, sample_sizes, variances] = \
     mlmc_simulator.simulate(epsilon=np.sqrt(precision_mc),
                             initial_sample_sizes=100,
-                            verbose=True)
+                            verbose=True, sample_sizes=[518207, 7831, 21])
 
 mlmc_total_cost = timeit.default_timer() - start_mlmc
 

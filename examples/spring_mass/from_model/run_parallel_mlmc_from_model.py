@@ -28,9 +28,9 @@ size = comm.Get_size()   #total number of processors
 
 ## Global Input Parameters
 num_samples = 5000  #for Monte Carlo only
-low_timestep = 1.0
-mid_timestep = 0.1
-high_timestep = 0.01  #used by Monte Carlo
+low_timestep = 0.5
+mid_timestep = 0.05
+high_timestep = 0.001  #used by Monte Carlo
 
 # Define random variable for spring stiffness:
 # Need to provide a sampleable function to create RandomInput instance in MLMCPy
@@ -201,6 +201,8 @@ comm.Barrier()
 # Step 4: PARALLEL - Original MLMCPy Monte Carlo Simulation
 # Use to generate a baseline reference for time and accuracy
 
+precision_mc = 0.0017089012209586753 / 100
+
 stiffness_distribution.reset_sampling()
 
 if rank == 0:
@@ -224,7 +226,7 @@ local_mlmc_cost = timeit.default_timer()
 [estimates, sample_sizes, variances] = \
     mlmc_simulator.simulate(epsilon=np.sqrt(precision_mc),
                             initial_sample_sizes=100,
-                            verbose=True)
+                            verbose=True, orig_mlmc=True)
 
 local_mlmc_cost = np.array([timeit.default_timer() - local_mlmc_cost])
 
@@ -276,7 +278,7 @@ NEW_local_mlmc_cost = timeit.default_timer()
 [NEW_estimates, NEW_sample_sizes, NEW_variances] = \
     NEW_mlmc_simulator.simulate(epsilon=np.sqrt(precision_mc),
                             initial_sample_sizes=100,
-                            verbose=True)
+                            verbose=True, orig_mlmc=False)
 
 NEW_local_mlmc_cost = np.array([timeit.default_timer() - NEW_local_mlmc_cost])
 

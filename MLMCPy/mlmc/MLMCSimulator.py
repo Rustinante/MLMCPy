@@ -59,7 +59,7 @@ class MLMCSimulator:
         self._verbose = False
 
     def simulate(self, epsilon, initial_sample_sizes=100, target_cost=None,
-                 sample_sizes=None, verbose=False):
+                 sample_sizes=None, verbose=False, orig_mlmc=True):
         """
         Perform MLMC simulation.
         Computes number of samples per level before running simulations
@@ -99,7 +99,7 @@ class MLMCSimulator:
         self._setup_simulation(epsilon, initial_sample_sizes, sample_sizes)
 
         # Run models and return estimate, sample sizes, and variances.
-        return self._run_simulation()
+        return self._run_simulation(orig_mlmc)
 
     def _setup_simulation(self, epsilon, initial_sample_sizes, sample_sizes):
         """
@@ -373,7 +373,7 @@ class MLMCSimulator:
                     total_cost = np.sum(costs * self._sample_sizes)
                     difference = self._target_cost - total_cost
 
-    def _run_simulation(self):
+    def _run_simulation(self, orig_mlmc):
         """
         Compute estimate by extracting number of samples from each level
         determined in the setup phase.
@@ -388,7 +388,7 @@ class MLMCSimulator:
         self._data.reset_sampling()
 
         start_time = timeit.default_timer()
-        estimates, variances = self._run_simulation_loop()
+        estimates, variances = self._run_simulation_loop(orig_mlmc)
         run_time = timeit.default_timer() - start_time
 
         if self._verbose:
@@ -396,7 +396,7 @@ class MLMCSimulator:
 
         return estimates, self._sample_sizes, variances
 
-    def _run_simulation_loop(self):
+    def _run_simulation_loop(self, orig_mlmc):
         """
         Main simulation loop where sample sizes determined in setup phase are
         drawn from the input data and run through the models. Values for
@@ -406,14 +406,38 @@ class MLMCSimulator:
             estimates: Estimates for each quantity of interest.
             variances: Variance of model outputs at each level.
         """
-        for level in range(self._num_levels):
+        if not orig_mlmc:
+            np.random.seed(self._cpu_rank)
+            samples, level_sizes = self._draw_samples_with_predetermined_sizes()
+            offset = 0
+            outputs = []
+            for level, s in enumerate(level_sizes):
+                level_outputs = []
+                for i, x in enumerate(samples[offset:offset + s]):
+                    if level > 0:
+                        level_outputs.append(self._models[level].evaluate(x) - self._models[level - 1].evaluate(x))
+                    else:
+                        level_outputs.append(self._models[level].evaluate(x))
+                if not level_outputs:
+                    level_outputs.append(np.zeros(self._output_size))
 
-            if self._sample_sizes[level] == 0:
-                continue
+                outputs.append(np.array(level_outputs))
+                offset += s
 
-            samples = self._get_sim_loop_samples(level)
-            output_differences = self._get_sim_loop_outputs(samples, level)
-            self._update_sim_loop_values(output_differences, level)
+            for level, level_out in enumerate(outputs):
+                level_aggregate = self._gather_arrays(level_out)
+                total_num_samples = sum([sizes[level] for sizes in self.cpu_to_predetermined_sizes.values()])
+                self._estimates += np.sum(level_aggregate, axis=0) / total_num_samples
+                self._variances += np.var(level_aggregate, axis=0) / total_num_samples
+        else:
+            for level in range(self._num_levels):
+
+                if self._sample_sizes[level] == 0:
+                    continue
+
+                samples = self._get_sim_loop_samples(level)
+                output_differences = self._get_sim_loop_outputs(samples, level)
+                self._update_sim_loop_values(output_differences, level)
 
         return self._estimates, self._variances
 
@@ -431,6 +455,20 @@ class MLMCSimulator:
         self._cpu_sample_sizes[level] = num_samples
 
         return samples
+
+    def _draw_samples_with_predetermined_sizes(self):
+        assert self._num_cpus == 4
+        assert self._num_levels == 3
+        self.cpu_to_predetermined_sizes = {
+            0: [129225, 1961, 5],
+            1: [129225, 1961, 5],
+            2: [129225, 1961, 5],
+            3: [129217, 1948, 6]
+        }
+        level_sizes = self.cpu_to_predetermined_sizes[self._cpu_rank]
+        num_samples_for_current_cpu = sum(level_sizes)
+        samples = self._data.draw_samples(num_samples_for_current_cpu)
+        return samples, level_sizes
 
     def _get_sim_loop_outputs(self, samples, level):
         """
@@ -701,9 +739,11 @@ class MLMCSimulator:
             self._num_cpus = comm.size
             self._cpu_rank = comm.rank
             self._comm = comm
+            print('=> mpi4py #CPUs: {}'.format(self._num_cpus))
 
         except ImportError:
 
+            print('=> mpi4py not found')
             self._num_cpus = 1
             self._cpu_rank = 0
 

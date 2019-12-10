@@ -3,20 +3,15 @@ import timeit
 from datetime import timedelta
 import imp
 
-try:
-    from mpi4py import MPI
-except:
-    pass
-
 from MLMCPy.input import Input
 from MLMCPy.model import Model
 
 
-class MLMCSimulator:
+class MLMCSimulator2:
     """
     Computes an estimate based on the Multi-Level Monte Carlo algorithm.
     """
-    def __init__(self, data, models, orig_mlmc=True):
+    def __init__(self, data, models):
         """
         Requires a data object that provides input samples and a list of models
         of increasing fidelity.
@@ -34,9 +29,6 @@ class MLMCSimulator:
         self._data = data
         self._models = models
         self._num_levels = len(self._models)
-
-        # Use the original MLMC code (or an optimized parallelization version)
-        self._orig_mlmc = orig_mlmc
 
         # Sample size to be taken at each level.
         self._sample_sizes = np.zeros(self._num_levels, dtype=np.int)
@@ -67,7 +59,7 @@ class MLMCSimulator:
         self._verbose = False
 
     def simulate(self, epsilon, initial_sample_sizes=100, target_cost=None,
-                 sample_sizes=None, verbose=False, orig_mlmc=True):
+                 sample_sizes=None, verbose=False):
         """
         Perform MLMC simulation.
         Computes number of samples per level before running simulations
@@ -107,7 +99,7 @@ class MLMCSimulator:
         self._setup_simulation(epsilon, initial_sample_sizes, sample_sizes)
 
         # Run models and return estimate, sample sizes, and variances.
-        return self._run_simulation(orig_mlmc)
+        return self._run_simulation()
 
     def _setup_simulation(self, epsilon, initial_sample_sizes, sample_sizes):
         """
@@ -126,7 +118,6 @@ class MLMCSimulator:
 
             costs, variances = self._compute_costs_and_variances()
             self._compute_optimal_sample_sizes(costs, variances)
-            self._caching_enabled = False
 
         else:
             self._target_cost = None
@@ -161,51 +152,7 @@ class MLMCSimulator:
             compute_times[level] = timeit.default_timer() - start_time
 
         # Get outputs across all CPUs before computing variances.
-        if not self._orig_mlmc:
-            if self._num_cpus == 1:
-                all_outputs = self._cached_outputs
-            else:
-                all_outputs_tmp = np.zeros((self._num_levels *
-                                         self._initial_sample_sizes[0],
-                                         self._output_size))
-
-                
-                # create count vector
-                counts = np.zeros(self._num_cpus, dtype="int")
-                for rank in range(self._num_cpus):
-                    counts[rank] = self._initial_sample_sizes[0] // self._num_cpus
-
-                    num_residual_samples = self._initial_sample_sizes[0] - \
-                        counts[rank] * self._num_cpus
-
-                    if rank < num_residual_samples:
-                        counts[rank] += 1
-
-                # create displacements vector
-                displ = np.insert(np.cumsum(counts),0,0)[0:-1]
-
-                # augment arrays to account for there being multiple levels
-                counts_buf = counts * self._num_levels * self._output_size
-                displ_buf = displ * self._num_levels * self._output_size
-
-                # Allgatherv the cache samples to each cpu
-                self._comm.Allgatherv([self._cached_outputs, MPI.DOUBLE], \
-                        [all_outputs_tmp, tuple(counts_buf), tuple(displ_buf), \
-                         MPI.DOUBLE])
-
-                # unpack the gathered array into the correct format
-                all_outputs = np.zeros((self._num_levels,
-                                         self._initial_sample_sizes[0],
-                                         self._output_size))
-
-                for cpu_num, num_cpu_samples in enumerate(counts):
-                    for level in range(self._num_levels):
-                        level_displ = displ_buf[cpu_num] + level * num_cpu_samples
-                        all_outputs[level][displ[cpu_num]:(displ[cpu_num]+num_cpu_samples)] = \
-                            all_outputs_tmp[level_displ:(level_displ+num_cpu_samples)]
-
-        else:
-            all_outputs = self._gather_arrays(self._cached_outputs, axis=1)
+        all_outputs = self._gather_arrays(self._cached_outputs, axis=1)
 
         variances = np.var(all_outputs, axis=1)
         costs = self._compute_costs(compute_times)
@@ -221,9 +168,6 @@ class MLMCSimulator:
         phase for reuse in the simulation phase.
         """
         # Determine number of samples to be taken on this processor.
-        # (this function gets the num sample sizes per level, and then
-        # expands that single number so that a copy of it exists for each level
-        # i.e. it turns 12 into [12 12 12]
         get_cpu_sample_sizes = np.vectorize(self._determine_num_cpu_samples)
         self._cpu_initial_sample_sizes = \
             get_cpu_sample_sizes(self._initial_sample_sizes)
@@ -289,8 +233,8 @@ class MLMCSimulator:
             costs = self._get_costs_from_models()
         else:
             # Compute costs based on compute time differences between levels.
-            costs = compute_times / self._cpu_initial_sample_sizes # \
-                  #  * self._num_cpus
+            costs = compute_times / self._cpu_initial_sample_sizes \
+                    * self._num_cpus
 
         costs = self._mean_over_all_cpus(costs)
 
@@ -429,7 +373,7 @@ class MLMCSimulator:
                     total_cost = np.sum(costs * self._sample_sizes)
                     difference = self._target_cost - total_cost
 
-    def _run_simulation(self, orig_mlmc):
+    def _run_simulation(self):
         """
         Compute estimate by extracting number of samples from each level
         determined in the setup phase.
@@ -444,7 +388,7 @@ class MLMCSimulator:
         self._data.reset_sampling()
 
         start_time = timeit.default_timer()
-        estimates, variances = self._run_simulation_loop(orig_mlmc)
+        estimates, variances = self._run_simulation_loop()
         run_time = timeit.default_timer() - start_time
 
         if self._verbose:
@@ -452,7 +396,7 @@ class MLMCSimulator:
 
         return estimates, self._sample_sizes, variances
 
-    def _run_simulation_loop(self, orig_mlmc):
+    def _run_simulation_loop(self):
         """
         Main simulation loop where sample sizes determined in setup phase are
         drawn from the input data and run through the models. Values for
@@ -462,117 +406,114 @@ class MLMCSimulator:
             estimates: Estimates for each quantity of interest.
             variances: Variance of model outputs at each level.
         """
-        if not self._orig_mlmc:
-            np.random.seed(self._cpu_rank)
-            samples, level_sizes = self._draw_samples_with_predetermined_sizes()
+
+        # create an array to store all of this cpu's outputs
+        this_cpu_outputs = np.empty([self._num_levels,1])
+        this_cpu_sample_sizes = np.zeros(self._num_levels)
+
+        for level in range(self._num_levels):
+
+            if self._sample_sizes[level] == 0:
+                this_cpu_outputs[level] = 0
+                continue
+
+            # draw the input samples for this level on this cpu
+            samples = self._get_sim_loop_samples(level)
+
+            # get the output differences for given level and samples
+            # output_differences = self._get_sim_loop_outputs(samples, level)
+            num_samples = samples.shape[0]
+
+            output_differences = np.zeros((num_samples, self.output_size))
+
+            if num_samples == 0:
+                output_differences = np.zeros((1, self.output_size))
+            else:
+                for i, sample in enumerate(samples):
+                    output_differences[i] = self._evaluate_sample(sample, level)
+                this_cpu_outputs[level] = output_differences
+                this_cpu_sample_sizes[level] = num_samples
+
+            # Update running totals for estimates and variances based on the output
+            # differences at a particular level.
+            # self._update_sim_loop_values(output_differences, level)
+
+        if rank == 0:
+            print "Sizes of samples processed in rank 0 cpu: ", this_cpu_sample_sizes
+
+        # gather all outputs
+        # Step 1: gather the sample sizes on each array, to use to create the buffers
+
+        num_all_cpus_samples_processed = np.zeros([self._num_cpus, self._num_levels], dtype='i')
+        self.comm.Allgather(this_cpu_sample_sizes, num_all_cpus_samples_processed)
+        sum_of_num_samples_per_level = np.zeros(self._num_levels)
+        for level in self._num_levels:
+            sum_of_num_samples_per_level[level] = \
+                    np.sum(num_all_cpus_samples_processed[:,level:level+1])
+        if rank == 0:
+            print "Sizes of samples processed in ALL cpus: ", sum_of_num_samples
+
+        # Step 2: gather all outputs.  need this to find the variance
+        all_output_differences_tmp = np.empty([self._num_cpus, self._num_levels], dtype=object)
+
+        self._comm.allgather(this_cpu_outputs, all_output_differences_tmp)
+
+        all_output_differences=all_output_differences_tmp[0:1,:]
+
+        for level in self._num_levels:
+            if level == 0:
+                continue
+            for rank in self._num_cpus:
+                all_output_differences[level]=np.append
+
+        
+        
+        for level in self._num_levels:
+            self._estimates += np.sum(all_output_differences[level], axis=0) / sum_of_num_samples[level]
+            self._variances += np.var(all_output_differences[level], axis=0) / sum_of_num_samples[level]
+
+            '''old _update_sim_loop_values(output_differences, level)
+
+            # find # of samples used for this level on this cpu
+            cpu_samples = self._cpu_sample_sizes[level]
+
+            # get all of the outputs for this level from all cpus into one long array
+            all_output_differences = self._gather_arrays(outputs, axis=0)
+
+            #   def _gather_arrays(self, this_cpu_array, axis=0):
+            #   
+            #   Collects an array from all processes and combines them so that single
+            #   processor ordering is preserved.
+                if self._num_cpus == 1:
+                    return this_cpu_array
+
+                gathered_arrays = self._comm.allgather(this_cpu_array)
+
+                return np.concatenate(gathered_arrays, axis=axis)
+
+
+            # get the total number of output for each level 
+            self._sample_sizes[level] = self._sum_over_all_cpus(cpu_samples)
+
+                # original code for sum_over_all_cpus
+                #    if self._num_cpus == 1:
+                #        return this_cpu_values
+
+                #    all_values = self._comm.allgather(this_cpu_values)
+
+                #    return np.sum(all_values, axis)
+                
+            num_samples = float(self._sample_sizes[level])
+
+
+            self._estimates += np.sum(all_output_differences, axis=0) / num_samples
+            self._variances += np.var(all_output_differences, axis=0) / num_samples
             '''
-            # Aaron Original! #
-            offset = 0
-            outputs = []
-            for level, s in enumerate(level_sizes):
-                level_outputs = []
-                for i, x in enumerate(samples[offset:offset + s]):
-                    if level > 0:
-                        level_outputs.append(self._models[level].evaluate(x) - self._models[level - 1].evaluate(x))
-                    else:
-                        level_outputs.append(self._models[level].evaluate(x))
-                if not level_outputs:
-                    level_outputs.append(np.zeros(self._output_size))
 
-                outputs.append(np.array(level_outputs))
-                offset += s
 
-            for level, level_out in enumerate(outputs):
-                level_aggregate = self._gather_arrays(level_out)
-                total_num_samples = sum([sizes[level] for sizes in self.cpu_to_predetermined_sizes.values()])
-                self._estimates += np.sum(level_aggregate, axis=0) / total_num_samples
-                self._variances += np.var(level_aggregate, axis=0) / total_num_samples
-            '''
-            # Sam with Gatherv #
-            # Generate all outputs for this cpu
-            offset = 0
-            samples_index = 0
-            cpu_outputs = np.zeros((np.sum(level_sizes),self._output_size))
-            for level, s in enumerate(level_sizes):
-                if s == 0:
-                    offset+=s
-                    continue
-                level_outputs = []
-                for i, x in enumerate(samples[offset:offset + s]):
-                    if level == 0:
-                        cpu_outputs[samples_index] = self._models[level].evaluate(x)
-                    else:  #level > 0
-                        cpu_outputs[samples_index] = self._models[level].evaluate(x) - self._models[level - 1].evaluate(x)
-                    samples_index+=1
-
-                offset += s
-
-            # create counts tuple
-            counts = np.zeros(self._num_cpus, dtype="int")
-            for cpu_rank in range(self._num_cpus):
-                counts[cpu_rank] = np.sum(self.cpu_to_predetermined_sizes[cpu_rank])
-
-            # create displacements tuple
-            displ = np.insert(np.cumsum(counts),0,0)[0:-1]
-
-            # augment arrays to account for multi-dimension outputs
-            counts_buf = counts * self._output_size
-            displ_buf = displ * self._output_size
-
-            all_outputs_flattened = np.zeros((np.sum(self.cpu_to_predetermined_sizes), \
-                                         self._output_size))
-           
-            start_gather = timeit.default_timer()
-            # Gather arrays
-            self._comm.Gatherv([cpu_outputs, MPI.DOUBLE], \
-                        [all_outputs_flattened, tuple(counts_buf), tuple(displ_buf), \
-                         MPI.DOUBLE], root=0)
-            end_gather = timeit.default_timer() - start_gather
-
-            start_unpack = timeit.default_timer()
-            # unpack the gathered array into the correct format
-            if self._cpu_rank == 0:
-                for level in range(self._num_levels):
-                    level_sample_size = np.sum(self.cpu_to_predetermined_sizes[:][:,level:level+1])
-                    level_outputs = np.zeros((level_sample_size,self._output_size))
-                    for cpu_rank, cpu_counts in enumerate(counts):
-                        if level == 0:
-                            all_out_start = displ[cpu_rank]
-                        else:
-                            all_out_start = displ[cpu_rank] + \
-                                np.sum(self.cpu_to_predetermined_sizes[cpu_rank][0:level])
-                        all_out_end = all_out_start + self.cpu_to_predetermined_sizes[cpu_rank][level]
-                        
-                        if cpu_rank == 0:
-                            lvl_out_start = 0 
-                        else:
-                            lvl_out_start = np.sum(self.cpu_to_predetermined_sizes[0:cpu_rank][:,level:level+1])
-                        lvl_out_end = lvl_out_start + self.cpu_to_predetermined_sizes[cpu_rank][level]
-
-                        level_outputs[lvl_out_start:lvl_out_end] = \
-                            all_outputs_flattened[all_out_start:all_out_end]
- 
-                    # Do calculations
-                    self._estimates += np.sum(level_outputs, axis=0) / level_sample_size
-                    self._variances += np.var(level_outputs, axis=0) / level_sample_size
-
-            end_unpack = timeit.default_timer() - start_unpack
-            if self._cpu_rank == 0:
-                print "time to gatherv: ", end_gather
-                print "time to unpack: ", end_unpack
-                print "total time to gather and process: ", end_gather + end_unpack
-            
-        else:
-            for level in range(self._num_levels):
-
-                if self._sample_sizes[level] == 0:
-                    continue
-
-                samples = self._get_sim_loop_samples(level)
-                output_differences = self._get_sim_loop_outputs(samples, level)
-                self._update_sim_loop_values(output_differences, level)
 
         return self._estimates, self._variances
+
 
     def _get_sim_loop_samples(self, level):
         """
@@ -588,53 +529,6 @@ class MLMCSimulator:
         self._cpu_sample_sizes[level] = num_samples
 
         return samples
-
-
-    def _draw_samples_with_predetermined_sizes(self):
-        assert self._num_cpus == 8
-        assert self._num_levels == 3
-
-        # Using this sample data to distribute
-        # [0.01064313 0.01886613 0.02495334]
-        # Initial sample variances: 
-        # [[8.24522495e+00]
-        #  [8.57219499e-02]
-        #  [7.91629551e-06]]
-        # Computing optimal sample sizes: 
-        # [5487  420    3]
-        # (total samples = 5910)
-        '''
-        self.cpu_to_predetermined_sizes = {
-            0: [685, 52, 1],
-            1: [685, 52, 1],
-            2: [685, 52, 1],
-            3: [692, 52, 0],
-            4: [685, 53, 0],
-            5: [685, 53, 0],
-            6: [685, 53, 0],
-            7: [685, 53, 0]
-        }
-        level_sizes = self.cpu_to_predetermined_sizes[self._cpu_rank]
-        num_samples_for_current_cpu = sum(level_sizes)
-        '''
-        self.cpu_to_predetermined_sizes = \
-            np.array([
-             [685, 52, 1],
-             [685, 52, 1],
-             [685, 52, 1],
-             [692, 52, 0],
-             [685, 53, 0],
-             [685, 53, 0],
-             [685, 53, 0],
-             [685, 53, 0]
-            ])
-        
-        self._sample_sizes = np.sum(self.cpu_to_predetermined_sizes, axis=0)
-        level_sizes = self.cpu_to_predetermined_sizes[self._cpu_rank]
-        num_samples_for_current_cpu = np.sum(level_sizes)
-        
-        samples = self._data.draw_samples(num_samples_for_current_cpu)
-        return samples, level_sizes
 
     def _get_sim_loop_outputs(self, samples, level):
         """
@@ -666,9 +560,6 @@ class MLMCSimulator:
         :param outputs: ndarray of output differences.
         :param level: int of level at which differences were computed.
         """
-        if self._cpu_rank == 0:
-            start_time  = timeit.default_timer()
-
         cpu_samples = self._cpu_sample_sizes[level]
 
         all_output_differences = self._gather_arrays(outputs, axis=0)
@@ -678,10 +569,6 @@ class MLMCSimulator:
 
         self._estimates += np.sum(all_output_differences, axis=0) / num_samples
         self._variances += np.var(all_output_differences, axis=0) / num_samples
-        if self._cpu_rank == 0:
-            end_time = timeit.default_timer() - start_time
-            print "time to gather and process values: ", end_time
-
 
     def _evaluate_sample(self, sample, level):
         """
@@ -912,11 +799,12 @@ class MLMCSimulator:
             self._num_cpus = comm.size
             self._cpu_rank = comm.rank
             self._comm = comm
-            #print('=> mpi4py #CPUs: {}'.format(self._num_cpus))
+
+            print "Num cpus: ", self._num_cpus
+            print "This CPU Rank: ", self._cpu_rank
 
         except ImportError:
 
-            print('=> mpi4py not found')
             self._num_cpus = 1
             self._cpu_rank = 0
 
@@ -929,17 +817,9 @@ class MLMCSimulator:
         if self._num_cpus == 1:
             return this_cpu_values
 
-        if not self._orig_mlmc:
-            all_values = np.zeros(self._num_levels)
-            self._comm.Allreduce([this_cpu_values, MPI.DOUBLE], \
-                                [all_values, MPI.DOUBLE], op=MPI.SUM)
-            all_values = all_values / self._num_cpus
-            return all_values
+        all_values = self._comm.allgather(this_cpu_values)
 
-        else:
-            all_values = self._comm.allgather(this_cpu_values)
-
-            return np.mean(all_values, axis)
+        return np.mean(all_values, axis)
 
     def _sum_over_all_cpus(self, this_cpu_values, axis=0):
         """

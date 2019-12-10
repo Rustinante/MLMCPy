@@ -32,6 +32,9 @@ num_samples = 5000  #for Monte Carlo only
 low_timestep = 1.0
 mid_timestep = 0.1
 high_timestep = 0.01  #used by Monte Carlo
+precision_mc = 0.0017089012209586753  #will be reset if Monte Carlo is run
+    # 0.0017089012209586753 is the precision from running 
+    # MC w/ 5000 samples @ dt0.01
 
 # Define random variable for spring stiffness:
 # Need to provide a sampleable function to create RandomInput instance in MLMCPy
@@ -42,7 +45,7 @@ np.random.seed(1)
 stiffness_distribution = RandomInput(distribution_function=beta_distribution,
                                      shift=1.0, scale=2.5, alpha=3., beta=2.,
                                      random_seed=1)
-
+'''
 ##########################################
 # Step 2: Serial Monte Carlo
 # This will generate a reference solution and target 
@@ -196,7 +199,7 @@ if rank == 0:
     print "PLEASE USE SEPARATE RUN SCRIPT."
     print "CANNOT RUN SERIAL MLMCPY IN SAME SCRIPT AS" 
     print "PARALLEL MLMCPY. Sorry!\n"
-
+'''
 comm.Barrier()
 #####################################################
 # Step 4: PARALLEL - Original MLMCPy Monte Carlo Simulation
@@ -218,14 +221,16 @@ model_level3 = SpringMassModel(mass=1.5, time_step=high_timestep)
 models = [model_level1, model_level2, model_level3]
 
 # Initialize MLMC & predict max displacement to specified precision
-mlmc_simulator = MLMCSimulator(stiffness_distribution, models)
+mlmc_simulator = MLMCSimulator(stiffness_distribution, models, orig_mlmc=True)
 
 local_mlmc_cost = timeit.default_timer()
 
 [estimates, sample_sizes, variances] = \
     mlmc_simulator.simulate(epsilon=np.sqrt(precision_mc),
                             initial_sample_sizes=100,
-                            verbose=True)
+                            verbose=True,
+            #                sample_sizes = [5487, 420, 3]
+                            )
 
 local_mlmc_cost = np.array([timeit.default_timer() - local_mlmc_cost])
 
@@ -270,7 +275,8 @@ NEW_model_level3 = SpringMassModel(mass=1.5, time_step=high_timestep)
 NEW_models = [model_level1, model_level2, model_level3]
 
 # Initialize MLMC & predict max displacement to specified precision
-NEW_mlmc_simulator = MLMCSimulator2(stiffness_distribution, NEW_models)
+NEW_mlmc_simulator = MLMCSimulator(stiffness_distribution, NEW_models, \
+                                    orig_mlmc=False)
 
 NEW_local_mlmc_cost = timeit.default_timer()
 
@@ -307,17 +313,26 @@ comm.Barrier()
 # Display the overall speedup results from all runs
 if rank == 0:
     print "\n################# SPEEDUP SUMMARY ###################"
-    print "Serial MC vs. Parallel MC Total speedup: ", ser_mc_total_cost / par_mc_total_cost
-    print "Serial MC vs. Parallel MC Computational speedup: ", ser_mc_computational_cost / par_mc_max_cost[0]
-    print
-    print "Parallel MC vs. Original MLMC Total Speedup: ", par_mc_total_cost / orig_mlmc_total_cost
-    print "Parallel MC vs. Original MLMC Computational Speedup: ", par_mc_max_cost[0] / orig_mlmc_max_cost[0]
-    print
-    print "Parallel MC vs. NEW MLMC Total Speedup: ", par_mc_total_cost / NEW_mlmc_total_cost
-    print "Parallel MC vs. NEW MLMC Computational Speedup: ", par_mc_max_cost[0] / NEW_mlmc_max_cost[0]
-    print
-    print "Original MLMC vs. NEW MLMC Total Speedup: ", orig_mlmc_total_cost / NEW_mlmc_total_cost
-    print "Original MLMC vs. NEW MLMC Computational Speedup: ", orig_mlmc_max_cost[0] / NEW_mlmc_max_cost[0]
+
+#    print "Serial MC vs. Parallel MC Total speedup: ", \
+#                ser_mc_total_cost / par_mc_total_cost
+#    print "Serial MC vs. Parallel MC Computational speedup: ", \
+#                ser_mc_computational_cost / par_mc_max_cost[0]
+#    print
+#    print "Parallel MC vs. Original MLMC Total Speedup: ", \
+#                par_mc_total_cost / orig_mlmc_total_cost
+#    print "Parallel MC vs. Original MLMC Computational Speedup: ", \
+#                par_mc_max_cost[0] / orig_mlmc_max_cost[0]
+#    print
+#    print "Parallel MC vs. NEW MLMC Total Speedup: ", \
+#                par_mc_total_cost / NEW_mlmc_total_cost
+#    print "Parallel MC vs. NEW MLMC Computational Speedup: ", \
+#                par_mc_max_cost[0] / NEW_mlmc_max_cost[0]
+#    print
+    print "Original MLMC vs. NEW MLMC Total Speedup: ", \
+                orig_mlmc_total_cost / NEW_mlmc_total_cost
+    print "Original MLMC vs. NEW MLMC Computational Speedup: ", \
+                orig_mlmc_max_cost[0] / NEW_mlmc_max_cost[0]
 
 
 

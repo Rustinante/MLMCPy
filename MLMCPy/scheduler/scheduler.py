@@ -37,4 +37,3 @@ def get_job_allocation_heuristically(job_counts, costs, num_workers):
 
 if __name__ == '__main__':
     allocation = get_job_allocation_heuristically([1, 2, 2, 1], [3, 4, 5, 11], 3)
-    print(allocation)

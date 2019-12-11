@@ -1,5 +1,6 @@
 import numpy as np
 import timeit
+from MLMCPy.scheduler import get_job_allocation_heuristically
 from datetime import timedelta
 import imp
 

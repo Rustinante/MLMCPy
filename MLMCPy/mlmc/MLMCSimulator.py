@@ -1,16 +1,12 @@
-import numpy as np
 import timeit
-from MLMCPy.scheduler import get_job_allocation_heuristically
 from datetime import timedelta
-import imp
 
-try:
-    from mpi4py import MPI
-except:
-    pass
+import numpy as np
+from mpi4py import MPI
 
 from MLMCPy.input import Input
 from MLMCPy.model import Model
+from MLMCPy.scheduler import get_job_allocation_heuristically
 
 
 class MLMCSimulator:
@@ -20,13 +16,14 @@ class MLMCSimulator:
 
     def __init__(self, data, models, use_original_mlmc=True):
         """
-        Requires a data object that provides input samples and a list of models
-        of increasing fidelity.
+        Requires a data object that provides input samples and a list of models of increasing fidelity.
 
         :type data: Input
         :type models: list(Model)
         """
-        self._initialize_mpi()
+        self._comm = MPI.COMM_WORLD
+        self.num_cpus = MPI.COMM_WORLD.size
+        self.cpu_rank = MPI.COMM_WORLD.rank
 
         self.data = data
         self.models = models
@@ -37,7 +34,7 @@ class MLMCSimulator:
         self.use_original_mlmc = use_original_mlmc
 
         # Sample size to be taken at each level.
-        self.sample_sizes = np.zeros(self.num_levels, dtype='int')
+        self.sample_sizes = np.zeros(self.num_levels, dtype='int64')
 
         # Used to compute sample sizes based on a fixed cost.
         self._target_cost = None
@@ -58,31 +55,24 @@ class MLMCSimulator:
 
         # Whether to allow use of model output caching.
         self.caching_enabled = False
-
-        # Enabled diagnostic text output.
         self.verbose = False
 
     def simulate(self, epsilon, initial_sample_sizes=100, target_cost=None, sample_sizes=None, verbose=False):
         """
-        Perform MLMC simulation.
-        Computes number of samples per level before running simulations
-        to determine estimates.
-        Can be specified based on target precision to achieve (epsilon), 
-        total target cost (in seconds), or on number of sample to run on each 
-        level directly.
+        Computes the number of samples per level before running simulations.
+        Can be specified based on target precision (epsilon).
 
         :param epsilon: Desired accuracy to be achieved for each quantity of interest.
-        :type epsilon: float, list of floats, or ndarray.
 
         :param initial_sample_sizes: Sample sizes used when computing cost
             and variance for each model in simulation.
         :type initial_sample_sizes: ndarray, int, list
 
-        :param target_cost: Target cost to run simulation (optional).
-            If specified, overrides any epsilon value provided.
-        :type target_cost: float or int
+        :param float target_cost: Target cost in seconds to run simulation (optional).
+        If specified, will override any epsilon value provided.
 
         :param np.ndarray sample_sizes: Number of samples to compute at each level
+
         :param bool verbose: Whether to print useful diagnostic information.
         :return: tuple of np.ndarray
             (estimates, sample count per level, variances)
@@ -92,7 +82,7 @@ class MLMCSimulator:
         self.reset_data_sampling()
 
         if sample_sizes is None:
-            self.initial_sample_sizes = self._convert_sample_sizes_to_np_array(initial_sample_sizes)
+            self.initial_sample_sizes = self._convert_sample_sizes_to_np_array(initial_sample_sizes, True)
             self.set_epsilon(epsilon)
 
             costs, variances = self._compute_costs_and_variances()
@@ -103,7 +93,7 @@ class MLMCSimulator:
         else:
             self._target_cost = None
             self.caching_enabled = False
-            sample_sizes = self._convert_sample_sizes_to_np_array(sample_sizes, initial_samples=False)
+            sample_sizes = self._convert_sample_sizes_to_np_array(sample_sizes, False)
             self._process_sample_sizes(sample_sizes, None)
             cost_var_estimates = None
 
@@ -123,15 +113,14 @@ class MLMCSimulator:
         self._initialize_cache()
 
         # Evaluate samples in model. Gather compute times for each level.
-        # Variance is computed from difference between outputs of adjacent
-        # layers evaluated from the same samples.
+        # Variance is computed from difference between outputs of adjacent layers evaluated from the same samples.
         compute_times = np.zeros(self.num_levels)
 
         for level in range(self.num_levels):
             input_samples = self._draw_setup_samples(level)
 
             start_time = timeit.default_timer()
-            self._compute_setup_outputs(input_samples, level)
+            self._populate_output_cache(input_samples, level)
             compute_times[level] = timeit.default_timer() - start_time
 
         # Get outputs across all CPUs before computing variances.
@@ -183,10 +172,6 @@ class MLMCSimulator:
         return costs, variances
 
     def _initialize_cache(self):
-        """
-        Sets up the cache for retaining model outputs evaluated in the setup
-        phase for reuse in the simulation phase.
-        """
         # Determine number of samples to be taken on this processor.
         # (this function gets the num sample sizes per level, and then
         # expands that single number so that a copy of it exists for each level
@@ -194,8 +179,7 @@ class MLMCSimulator:
         self._cpu_initial_sample_sizes = np.vectorize(self._determine_num_cpu_samples)(self.initial_sample_sizes)
 
         cpu_sample_size = np.max(self._cpu_initial_sample_sizes)
-        # Cache model outputs computed here so that they can be reused
-        # in the simulation.
+        # Cache model outputs computed here so that they can be reused in the simulation
         self.cached_inputs = np.zeros((self.num_levels, cpu_sample_size, self.input_size))
         self.cached_outputs = np.zeros((self.num_levels, cpu_sample_size, self.output_size))
 
@@ -214,7 +198,7 @@ class MLMCSimulator:
 
         return input_samples
 
-    def _compute_setup_outputs(self, input_samples, level):
+    def _populate_output_cache(self, input_samples, level):
         """
         Evaluate model outputs for a given level. If level > 0, subtract outputs
         at level below specified level. Store results in _cached_outputs.
@@ -234,8 +218,6 @@ class MLMCSimulator:
         :param compute_times: ndarray of computation times for computing
         model at each layer and preceding layer.
         """
-        # If the models have costs predetermined, use them to compute costs
-        # between each level.
         if self._models_have_costs():
             costs = self._get_costs_from_models()
         else:
@@ -288,9 +270,7 @@ class MLMCSimulator:
 
         if self.verbose:
             print(np.array2string(self.sample_sizes))
-
             estimated_runtime = np.dot(self.sample_sizes, np.squeeze(costs))
-
             self._show_time_estimate(estimated_runtime)
 
     def _compute_mu(self, costs, variances):
@@ -605,7 +585,7 @@ class MLMCSimulator:
 
         self._epsilons = epsilon
 
-    def _convert_sample_sizes_to_np_array(self, sample_sizes, initial_samples=True):
+    def _convert_sample_sizes_to_np_array(self, sample_sizes, is_initial_sample):
         """
         Produce an array of sample sizes, ensuring that its length
         matches the number of models.
@@ -628,7 +608,7 @@ class MLMCSimulator:
         if verified_sample_sizes.size != self.num_levels:
             raise ValueError("Number of initial sample sizes must match the number of models.")
 
-        if not np.all(verified_sample_sizes > 1) and initial_samples:
+        if not np.all(verified_sample_sizes > 1) and is_initial_sample:
             raise ValueError("Each initial sample size must be at least 2.")
 
         return verified_sample_sizes
@@ -687,26 +667,6 @@ class MLMCSimulator:
         samples = samples[subsample_index: subsample_index + subsample_sizes[self.cpu_rank + 1], :]
 
         return samples
-
-    def _initialize_mpi(self):
-        """
-        Detects whether multiple processors are available and sets
-        self.number_CPUs and self.cpu_rank accordingly.
-        """
-        try:
-            imp.find_module('mpi4py')
-
-            from mpi4py import MPI
-            comm = MPI.COMM_WORLD
-
-            self.num_cpus = comm.size
-            self.cpu_rank = comm.rank
-            self._comm = comm
-
-        except ImportError:
-            print('=> mpi4py not found')
-            self.num_cpus = 1
-            self.cpu_rank = 0
 
     def _mean_over_all_cpus(self, this_cpu_values, axis=0):
         """

@@ -235,12 +235,10 @@ if __name__ == '__main__':
     model_type = 'spring_mass'
     model_type = 'projectile'
     if model_type == 'spring_mass':
-        ## Global Input Parameters
         num_samples = 5000  # for Monte Carlo only
         low_timestep = 1.0
         mid_timestep = 0.1
         high_timestep = 0.01  # used by Monte Carlo
-
 
         # Define random variable for spring stiffness:
         # Need to provide a sampleable function to create RandomInput instance in MLMCPy
@@ -256,11 +254,10 @@ if __name__ == '__main__':
 
         # Initialize spring-mass models for MLMC. Here using three levels
         # with MLMC defined by different time steps
-        new_model_l1 = SpringMassModel(mass=1.5, time_step=low_timestep)
-        new_model_l2 = SpringMassModel(mass=1.5, time_step=mid_timestep)
-        new_model_l3 = SpringMassModel(mass=1.5, time_step=high_timestep)
-        models = [new_model_l1, new_model_l2, new_model_l3]
-        precision_mc = 0.0017089012209586753  # will be reset if Monte Carlo is run
+        models = [SpringMassModel(mass=1.5, time_step=low_timestep),
+                  SpringMassModel(mass=1.5, time_step=mid_timestep),
+                  SpringMassModel(mass=1.5, time_step=high_timestep)]
+        precision_mc = 0.0017089012209586753
 
     elif model_type == 'projectile':
         from examples.projectile.projectile import Projectile
@@ -284,10 +281,10 @@ if __name__ == '__main__':
         ]
 
         distribution = ProjectileRandomInput()
-        precision_mc = 0.0017089012209586753  # will be reset if Monte Carlo is run
+        precision_mc = 0.0017089012209586753
 
     else:
-        raise ValueError("unrecognized model type")
+        raise ValueError(f"unrecognized model type: {model_type}")
 
     np.random.seed(1)
     original_setup_max_time, original_sim_max_time = test_old_or_new_mlmc(

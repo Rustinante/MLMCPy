@@ -2,9 +2,10 @@ import numpy as np
 import timeit
 from mpi4py import MPI
 
-from spring_mass_model import SpringMassModel
+from examples.spring_mass.from_model.spring_mass_model import SpringMassModel
 from MLMCPy.input import RandomInput
 from MLMCPy.mlmc import MLMCSimulator
+from MLMCPy.input.Input import Input
 
 '''
 This script demonstrates MLMCPy for simulating a spring-mass system with a 
@@ -175,37 +176,24 @@ if rank == 0:
 '''
 
 
-def test_old_or_new_mlmc(use_original_mlmc):
-    #####################################################
-    # Step 5: PARALLEL - Original MLMCPy Monte Carlo Simulation
-    # Use to generate a baseline reference of parallel timing
-
+def test_old_or_new_mlmc(use_original_mlmc, data_distribution, models, precision_mc):
     prefix = "Original" if use_original_mlmc else "NEW"
     if rank == 0:
         print(f"\n################# TEST {prefix} MLMC ###################")
 
-    stiffness_distribution.reset_sampling()
+    data_distribution.reset_sampling()
     setup_start_time = timeit.default_timer()
 
-    # Initialize spring-mass models for MLMC. Here using three levels
-    # with MLMC defined by different time steps
-    new_model_l1 = SpringMassModel(mass=1.5, time_step=low_timestep)
-    new_model_l2 = SpringMassModel(mass=1.5, time_step=mid_timestep)
-    new_model_l3 = SpringMassModel(mass=1.5, time_step=high_timestep)
-
-
-    NEW_models = [new_model_l1, new_model_l2, new_model_l3]
-
     # Initialize MLMC & predict max displacement to specified precision
-    NEW_mlmc_simulator = MLMCSimulator(stiffness_distribution, NEW_models, \
-                                        orig_mlmc=use_original_mlmc)
+    simulator = MLMCSimulator(data_distribution, models, orig_mlmc=use_original_mlmc)
 
     begin_sim_time = timeit.default_timer()
 
-    NEW_estimates, NEW_sample_sizes, NEW_variances = NEW_mlmc_simulator.simulate(
+    new_estimates, new_sample_sizes, new_variances = simulator.simulate(
         epsilon=np.sqrt(precision_mc),
-        initial_sample_sizes=100,
-        verbose=True, orig_mlmc=False)
+        initial_sample_sizes=20,
+        verbose=True
+    )
 
     setup_time = np.array([begin_sim_time - setup_start_time])
     total_sim_time_local = np.array([timeit.default_timer() - begin_sim_time])
@@ -218,12 +206,11 @@ def test_old_or_new_mlmc(use_original_mlmc):
         comm.Reduce(dt, new_mlmc_min_cost, op=MPI.MIN, root=0)
         comm.Reduce(dt, new_mlmc_sum_cost, op=MPI.SUM, root=0)
 
-        #Summarize results:
         if rank == 0:
             print(f"\nSUMMARY OF {prefix} PARALLEL MLMCPY:")
-            print(f'{prefix} MLMC sample sizes used: ', NEW_sample_sizes)
-            print(f'{prefix} MLMC estimate: %s' % NEW_estimates[0])
-            print(f'{prefix} MLMC precision: %s' % NEW_variances[0])
+            print(f'{prefix} MLMC sample sizes used: ', new_sample_sizes)
+            print(f'{prefix} MLMC estimate: %s' % new_estimates[0])
+            print(f'{prefix} MLMC precision: %s' % new_variances[0])
 
             print(f"Max single-cpu {label} time: ", new_mlmc_max_cost[0])
             print(f"Min single-cpu {label} time: ", new_mlmc_min_cost[0])
@@ -242,36 +229,84 @@ if __name__ == '__main__':
     rank = comm.Get_rank()  # this processors number/identifier (int)
     size = comm.Get_size()  # total number of processors
 
-    ##########################################
-    # Step 1 - Establish Setup Parameters
-
-    ## Global Input Parameters
-    num_samples = 5000  # for Monte Carlo only
-    low_timestep = 1.0
-    mid_timestep = 0.1
-    high_timestep = 0.01  # used by Monte Carlo
-    precision_mc = 0.0017089012209586753  # will be reset if Monte Carlo is run
-
-
     # 0.0017089012209586753 is the precision from running
     # MC w/ 5000 samples @ dt0.01
 
-    # Define random variable for spring stiffness:
-    # Need to provide a sampleable function to create RandomInput instance in MLMCPy
-    def beta_distribution(shift, scale, alpha, beta, size):
-        return shift + scale * np.random.beta(alpha, beta, size)
+    model_type = 'spring_mass'
+    model_type = 'projectile'
+    if model_type == 'spring_mass':
+        ## Global Input Parameters
+        num_samples = 5000  # for Monte Carlo only
+        low_timestep = 1.0
+        mid_timestep = 0.1
+        high_timestep = 0.01  # used by Monte Carlo
 
+
+        # Define random variable for spring stiffness:
+        # Need to provide a sampleable function to create RandomInput instance in MLMCPy
+        def beta_distribution(shift, scale, alpha, beta, size):
+            return shift + scale * np.random.beta(alpha, beta, size)
+
+
+        distribution = RandomInput(
+            distribution_function=beta_distribution,
+            shift=1.0, scale=2.5, alpha=3., beta=2.,
+            random_seed=1
+        )
+
+        # Initialize spring-mass models for MLMC. Here using three levels
+        # with MLMC defined by different time steps
+        new_model_l1 = SpringMassModel(mass=1.5, time_step=low_timestep)
+        new_model_l2 = SpringMassModel(mass=1.5, time_step=mid_timestep)
+        new_model_l3 = SpringMassModel(mass=1.5, time_step=high_timestep)
+        models = [new_model_l1, new_model_l2, new_model_l3]
+        precision_mc = 0.0017089012209586753  # will be reset if Monte Carlo is run
+
+    elif model_type == 'projectile':
+        from examples.projectile.projectile import Projectile
+
+
+        class ProjectileRandomInput(Input):
+            def draw_samples(self, num_samples):
+                # height, launch_speed, launch_angle
+                a = np.array([200, 10, 45])
+                # a = np.array([200, 2.92, 90])
+                # return np.tile(a, (num_samples, 1))
+                return np.tile(np.array([200, 2.92, 30]), (num_samples, 1)) + np.random.uniform(low=-1, high=1, size=(num_samples, 3)) * np.array([[0.001, 0.001, 0.1]])
+
+            def reset_sampling(self):
+                pass
+
+
+        models = [
+            Projectile(1000),
+            Projectile(10000),
+            Projectile(100000),
+        ]
+
+        distribution = ProjectileRandomInput()
+        precision_mc = 0.0017089012209586753  # will be reset if Monte Carlo is run
+
+    else:
+        raise ValueError("unrecognized model type")
 
     np.random.seed(1)
-    stiffness_distribution = RandomInput(distribution_function=beta_distribution,
-                                         shift=1.0, scale=2.5, alpha=3., beta=2.,
-                                         random_seed=1)
-
-    original_setup_max_time, original_sim_max_time = test_old_or_new_mlmc(use_original_mlmc=True)
+    original_setup_max_time, original_sim_max_time = test_old_or_new_mlmc(
+        use_original_mlmc=True,
+        data_distribution=distribution,
+        models=models,
+        precision_mc=precision_mc
+    )
     comm.Barrier()
-    new_setup_max_time, new_sim_max_time = test_old_or_new_mlmc(use_original_mlmc=False)
-    comm.Barrier()
 
+    np.random.seed(1)
+    new_setup_max_time, new_sim_max_time = test_old_or_new_mlmc(
+        use_original_mlmc=False,
+        data_distribution=distribution,
+        models=models,
+        precision_mc=precision_mc
+    )
+    comm.Barrier()
     #####################################################
     # Step 6: Final speedup comparisons
     # Display the overall speedup results from all runs

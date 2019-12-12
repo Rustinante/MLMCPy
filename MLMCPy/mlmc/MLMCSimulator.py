@@ -555,45 +555,9 @@ class MLMCSimulator:
         cpu_to_predetermined_sizes, _ = get_job_allocation_heuristically(
             job_counts=self._sample_sizes, costs=costs, num_workers=self._num_cpus
         )
-        print('cpu_to_predetermined_sizes: ')
-        print(cpu_to_predetermined_sizes)
-
-        # Using this sample data to distribute
-        # [0.01064313 0.01886613 0.02495334]
-        # Initial sample variances: 
-        # [[8.24522495e+00]
-        #  [8.57219499e-02]
-        #  [7.91629551e-06]]
-        # Computing optimal sample sizes: 
-        # [5487  420    3]
-        # (total samples = 5910)
-        '''
-        self.cpu_to_predetermined_sizes = {
-            0: [685, 52, 1],
-            1: [685, 52, 1],
-            2: [685, 52, 1],
-            3: [692, 52, 0],
-            4: [685, 53, 0],
-            5: [685, 53, 0],
-            6: [685, 53, 0],
-            7: [685, 53, 0]
-        }
-        level_sizes = self.cpu_to_predetermined_sizes[self._cpu_rank]
-        num_samples_for_current_cpu = sum(level_sizes)
-        '''
-        # self.cpu_to_predetermined_sizes = \
-        #     np.array([
-        #      [685, 52, 1],
-        #      [685, 52, 1],
-        #      [685, 52, 1],
-        #      [692, 52, 0],
-        #      [685, 53, 0],
-        #      [685, 53, 0],
-        #      [685, 53, 0],
-        #      [685, 53, 0]
-        #     ])
-        #
-        # self._sample_sizes = np.sum(cpu_to_predetermined_sizes, axis=0)
+        if self._cpu_rank == 0:
+            print('cpu_to_predetermined_sizes: ')
+            print(cpu_to_predetermined_sizes)
         num_samples_for_current_cpu = np.sum(cpu_to_predetermined_sizes[self._cpu_rank])
         samples = self._data.draw_samples(int(num_samples_for_current_cpu))
         return samples, cpu_to_predetermined_sizes

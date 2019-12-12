@@ -191,7 +191,7 @@ def test_old_or_new_mlmc(use_original_mlmc, data_distribution, models, precision
 
     new_estimates, new_sample_sizes, new_variances = simulator.simulate(
         epsilon=np.sqrt(precision_mc),
-        initial_sample_sizes=20,
+        initial_sample_sizes=32,
         verbose=True
     )
 
@@ -269,19 +269,18 @@ if __name__ == '__main__':
         class ProjectileRandomInput(Input):
             def draw_samples(self, num_samples):
                 # height, launch_speed, launch_angle
-                a = np.array([200, 10, 45])
-                # a = np.array([200, 2.92, 90])
-                # return np.tile(a, (num_samples, 1))
-                return np.tile(np.array([200, 2.92, 30]), (num_samples, 1)) + np.random.uniform(low=-1, high=1, size=(num_samples, 3)) * np.array([[0.001, 0.001, 0.1]])
+                return np.tile(np.array([200, 2.92, 30]), (num_samples, 1)) \
+                       + np.random.uniform(low=-1, high=1, size=(num_samples, 3)) * np.array([[0.001, 0.001, 0.05]])
 
             def reset_sampling(self):
                 pass
 
 
         models = [
-            Projectile(1000),
             Projectile(10000),
             Projectile(100000),
+            Projectile(1000000),
+            Projectile(2000000),
         ]
 
         distribution = ProjectileRandomInput()

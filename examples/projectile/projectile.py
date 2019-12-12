@@ -31,7 +31,7 @@ class Projectile(Model):
         v0 = launch_speed
         theta = np.radians(launch_angle)
 
-        tgrid, dt = np.linspace(0, 15000, num_time_steps, retstep=True)
+        tgrid, dt = np.linspace(0, 10000, num_time_steps, retstep=True)
         # trajectory = np.empty((num_time_steps, 2))
         trajectory = []
         v = np.zeros((num_time_steps, 2))

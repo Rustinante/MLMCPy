@@ -63,7 +63,7 @@ class MLMCSimulator:
         self._cached_outputs = np.empty(0)
 
         # Whether to allow use of model output caching.
-        self._caching_enabled = True
+        self._caching_enabled = False
 
         # Enabled diagnostic text output.
         self._verbose = False

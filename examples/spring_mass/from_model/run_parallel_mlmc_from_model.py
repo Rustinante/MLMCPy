@@ -1,11 +1,13 @@
-import numpy as np
+import argparse
 import timeit
+
+import numpy as np
 from mpi4py import MPI
 
-from examples.spring_mass.from_model.spring_mass_model import SpringMassModel
 from MLMCPy.input import RandomInput
-from MLMCPy.mlmc import MLMCSimulator
 from MLMCPy.input.Input import Input
+from MLMCPy.mlmc import MLMCSimulator
+from examples.spring_mass.from_model.spring_mass_model import SpringMassModel
 
 '''
 This script demonstrates MLMCPy for simulating a spring-mass system with a 
@@ -176,8 +178,11 @@ if rank == 0:
 '''
 
 
-def test_old_or_new_mlmc(use_original_mlmc, data_distribution, models, precision_mc):
+def test_old_or_new_mlmc(use_original_mlmc, data_distribution, models, precision_mc, comm):
     prefix = "Original" if use_original_mlmc else "NEW"
+
+    rank = comm.Get_rank()  # this processors number/identifier (int)
+    size = comm.Get_size()  # total number of processors
     if rank == 0:
         print(f"\n################# TEST {prefix} MLMC ###################")
 
@@ -224,21 +229,22 @@ def test_old_or_new_mlmc(use_original_mlmc, data_distribution, models, precision
 
 
 if __name__ == '__main__':
-    # Set up MPI communicator for running in parallel
+    parser = argparse.ArgumentParser()
+    parser.add_argument('model', type=str, help='one of [spring_mass, projectile]')
+    args = parser.parse_args()
+
     comm = MPI.COMM_WORLD.Clone()
-    rank = comm.Get_rank()  # this processors number/identifier (int)
-    size = comm.Get_size()  # total number of processors
 
     # 0.0017089012209586753 is the precision from running
     # MC w/ 5000 samples @ dt0.01
 
-    model_type = 'spring_mass'
-    model_type = 'projectile'
+    model_type = args.model
     if model_type == 'spring_mass':
         num_samples = 5000  # for Monte Carlo only
         low_timestep = 1.0
         mid_timestep = 0.1
         high_timestep = 0.01  # used by Monte Carlo
+
 
         # Define random variable for spring stiffness:
         # Need to provide a sampleable function to create RandomInput instance in MLMCPy
@@ -291,7 +297,8 @@ if __name__ == '__main__':
         use_original_mlmc=True,
         data_distribution=distribution,
         models=models,
-        precision_mc=precision_mc
+        precision_mc=precision_mc,
+        comm=comm
     )
     comm.Barrier()
 
@@ -300,13 +307,14 @@ if __name__ == '__main__':
         use_original_mlmc=False,
         data_distribution=distribution,
         models=models,
-        precision_mc=precision_mc
+        precision_mc=precision_mc,
+        comm=comm
     )
     comm.Barrier()
     #####################################################
     # Step 6: Final speedup comparisons
     # Display the overall speedup results from all runs
-    if rank == 0:
+    if comm.Get_rank() == 0:
         print("\n################# SPEEDUP SUMMARY ###################")
 
         #    print "Serial MC vs. Parallel MC Total speedup: ", \

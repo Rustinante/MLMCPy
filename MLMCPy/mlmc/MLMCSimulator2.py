@@ -134,7 +134,7 @@ class MLMCSimulator2:
             2d ndarray of variances
         """
         if self._verbose:
-            print "Determining costs: "
+            print("Determining costs: ")
 
         self._initialize_cache()
 
@@ -158,7 +158,7 @@ class MLMCSimulator2:
         costs = self._compute_costs(compute_times)
 
         if self._verbose:
-            print 'Initial sample variances: \n%s' % variances
+            print('Initial sample variances: \n%s' % variances)
 
         return costs, variances
 
@@ -239,7 +239,7 @@ class MLMCSimulator2:
         costs = self._mean_over_all_cpus(costs)
 
         if self._verbose:
-            print np.array2string(costs)
+            print(np.array2string(costs))
 
         return costs
 
@@ -281,7 +281,7 @@ class MLMCSimulator2:
         :param costs: 1d ndarray of costs
         """
         if self._verbose:
-            print "Computing optimal sample sizes: "
+            print("Computing optimal sample sizes: ")
 
         # Need 2d version of costs in order to vectorize the operations.
         costs = costs[:, np.newaxis]
@@ -296,7 +296,7 @@ class MLMCSimulator2:
 
         if self._verbose:
 
-            print np.array2string(self._sample_sizes)
+            print(np.array2string(self._sample_sizes))
 
             estimated_runtime = np.dot(self._sample_sizes, np.squeeze(costs))
 
@@ -439,7 +439,7 @@ class MLMCSimulator2:
             # self._update_sim_loop_values(output_differences, level)
 
         if rank == 0:
-            print "Sizes of samples processed in rank 0 cpu: ", this_cpu_sample_sizes
+            print("Sizes of samples processed in rank 0 cpu: ", this_cpu_sample_sizes)
 
         # gather all outputs
         # Step 1: gather the sample sizes on each array, to use to create the buffers
@@ -451,7 +451,7 @@ class MLMCSimulator2:
             sum_of_num_samples_per_level[level] = \
                     np.sum(num_all_cpus_samples_processed[:,level:level+1])
         if rank == 0:
-            print "Sizes of samples processed in ALL cpus: ", sum_of_num_samples
+            print("Sizes of samples processed in ALL cpus: ", sum_of_num_samples)
 
         # Step 2: gather all outputs.  need this to find the variance
         all_output_differences_tmp = np.empty([self._num_cpus, self._num_levels], dtype=object)
@@ -604,9 +604,9 @@ class MLMCSimulator2:
         :param variances: ndarray of variances for each QoI.
         """
         # Compare variance for each quantity of interest to epsilon values.
-        print
-        print 'Total run time: %s' % str(run_time)
-        print
+        print()
+        print('Total run time: %s' % str(run_time))
+        print()
 
         epsilons_squared = np.square(self._epsilons)
         for i, variance in enumerate(variances):
@@ -614,10 +614,10 @@ class MLMCSimulator2:
             passed = variance < epsilons_squared[i]
             estimate = estimates[i]
 
-            print 'QOI #%s: estimate: %s, variance: %s, ' \
+            print('QOI #%s: estimate: %s, variance: %s, ' \
                   'epsilon^2: %s, met target precision: %s' % \
                   (i, float(estimate), float(variance),
-                   float(epsilons_squared[i]), passed)
+                   float(epsilons_squared[i]), passed))
 
     def _determine_input_output_size(self):
         """
@@ -800,8 +800,8 @@ class MLMCSimulator2:
             self._cpu_rank = comm.rank
             self._comm = comm
 
-            print "Num cpus: ", self._num_cpus
-            print "This CPU Rank: ", self._cpu_rank
+            print("Num cpus: ", self._num_cpus)
+            print("This CPU Rank: ", self._cpu_rank)
 
         except ImportError:
 
@@ -878,4 +878,4 @@ class MLMCSimulator2:
 
         time_delta = timedelta(seconds=seconds)
 
-        print 'Estimated simulation time: %s' % str(time_delta)
+        print('Estimated simulation time: %s' % str(time_delta))

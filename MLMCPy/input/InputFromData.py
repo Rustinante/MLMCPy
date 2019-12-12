@@ -2,7 +2,7 @@ import numpy as np
 import os
 import warnings
 
-from Input import Input
+from MLMCPy.input.Input import Input
 
 
 class InputFromData(Input):

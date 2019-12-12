@@ -24,7 +24,7 @@ def get_job_allocation_heuristically(job_counts, costs, num_workers):
     num_models = len(costs)
 
     allocation = np.zeros((num_workers, num_models), dtype='int64')
-    total_costs = np.zeros(num_workers, dtype='int64')
+    total_costs = np.zeros(num_workers)
 
     for i, (count, cost) in enumerate(zip(job_counts[::-1], costs[::-1])):
         model_index = num_models - 1 - i

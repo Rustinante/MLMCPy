@@ -1,6 +1,6 @@
 import numpy as np
 
-from Model import Model
+from MLMCPy.model.Model import Model
 
 
 class CovarianceWrapperModel(Model):

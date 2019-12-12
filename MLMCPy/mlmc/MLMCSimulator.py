@@ -105,10 +105,10 @@ class MLMCSimulator:
 
         self._determine_input_output_size()
 
-        self._setup_simulation(epsilon, initial_sample_sizes, sample_sizes)
+        cost_var_estimates = self._setup_simulation(epsilon, initial_sample_sizes, sample_sizes)
 
         # Run models and return estimate, sample sizes, and variances.
-        return self._run_simulation(orig_mlmc)
+        return self._run_simulation(cost_var_estimates)
 
     def _setup_simulation(self, epsilon, initial_sample_sizes, sample_sizes):
         """
@@ -128,6 +128,7 @@ class MLMCSimulator:
             costs, variances = self._compute_costs_and_variances()
             self._compute_optimal_sample_sizes(costs, variances)
             self._caching_enabled = False
+            return costs, variances
 
         else:
             self._target_cost = None
@@ -144,7 +145,7 @@ class MLMCSimulator:
             2d ndarray of variances
         """
         if self._verbose:
-            print "Determining costs: "
+            print ("Determining costs: ")
 
         self._initialize_cache()
 
@@ -170,7 +171,6 @@ class MLMCSimulator:
                                          self._initial_sample_sizes[0],
                                          self._output_size))
 
-                
                 # create count vector
                 counts = np.zeros(self._num_cpus, dtype="int")
                 for rank in range(self._num_cpus):
@@ -212,7 +212,7 @@ class MLMCSimulator:
         costs = self._compute_costs(compute_times)
 
         if self._verbose:
-            print 'Initial sample variances: \n%s' % variances
+            print('Initial sample variances: \n%s' % variances)
 
         return costs, variances
 
@@ -246,7 +246,7 @@ class MLMCSimulator:
         Store samples in _cached_inputs.
         :param level: int level
         """
-        num_samples = self._initial_sample_sizes[level]
+        num_samples = int(self._initial_sample_sizes[level])
         input_samples = self._draw_samples(num_samples)
 
         # To cache these samples, we have to account for the possibility
@@ -296,7 +296,7 @@ class MLMCSimulator:
         costs = self._mean_over_all_cpus(costs)
 
         if self._verbose:
-            print np.array2string(costs)
+            print(np.array2string(costs))
 
         return costs
 
@@ -338,7 +338,7 @@ class MLMCSimulator:
         :param costs: 1d ndarray of costs
         """
         if self._verbose:
-            print "Computing optimal sample sizes: "
+            print ("Computing optimal sample sizes: ")
 
         # Need 2d version of costs in order to vectorize the operations.
         costs = costs[:, np.newaxis]
@@ -352,8 +352,7 @@ class MLMCSimulator:
         self._process_sample_sizes(sample_sizes, costs)
 
         if self._verbose:
-
-            print np.array2string(self._sample_sizes)
+            print(np.array2string(self._sample_sizes))
 
             estimated_runtime = np.dot(self._sample_sizes, np.squeeze(costs))
 
@@ -430,7 +429,7 @@ class MLMCSimulator:
                     total_cost = np.sum(costs * self._sample_sizes)
                     difference = self._target_cost - total_cost
 
-    def _run_simulation(self, orig_mlmc):
+    def _run_simulation(self, cost_var_estimates):
         """
         Compute estimate by extracting number of samples from each level
         determined in the setup phase.
@@ -445,7 +444,7 @@ class MLMCSimulator:
         self._data.reset_sampling()
 
         start_time = timeit.default_timer()
-        estimates, variances = self._run_simulation_loop(orig_mlmc)
+        estimates, variances = self._run_simulation_loop(cost_var_estimates)
         run_time = timeit.default_timer() - start_time
 
         if self._verbose:
@@ -453,7 +452,7 @@ class MLMCSimulator:
 
         return estimates, self._sample_sizes, variances
 
-    def _run_simulation_loop(self, orig_mlmc):
+    def _run_simulation_loop(self, cost_var_estimates):
         """
         Main simulation loop where sample sizes determined in setup phase are
         drawn from the input data and run through the models. Values for
@@ -464,105 +463,66 @@ class MLMCSimulator:
             variances: Variance of model outputs at each level.
         """
         if not self._orig_mlmc:
+            costs, _ = cost_var_estimates
             np.random.seed(self._cpu_rank)
-            samples, level_sizes = self._draw_samples_with_predetermined_sizes()
-            '''
-            # Aaron Original! #
-            offset = 0
-            outputs = []
-            for level, s in enumerate(level_sizes):
-                level_outputs = []
-                for i, x in enumerate(samples[offset:offset + s]):
-                    if level > 0:
-                        level_outputs.append(self._models[level].evaluate(x) - self._models[level - 1].evaluate(x))
-                    else:
-                        level_outputs.append(self._models[level].evaluate(x))
-                if not level_outputs:
-                    level_outputs.append(np.zeros(self._output_size))
-
-                outputs.append(np.array(level_outputs))
-                offset += s
-
-            for level, level_out in enumerate(outputs):
-                level_aggregate = self._gather_arrays(level_out)
-                total_num_samples = sum([sizes[level] for sizes in self.cpu_to_predetermined_sizes.values()])
-                self._estimates += np.sum(level_aggregate, axis=0) / total_num_samples
-                self._variances += np.var(level_aggregate, axis=0) / total_num_samples
-            '''
+            samples, cpu_to_num_samples = self._draw_samples_with_predetermined_sizes(costs=costs)
+            level_sizes = cpu_to_num_samples[self._cpu_rank]
             # Sam with Gatherv #
             # Generate all outputs for this cpu
             offset = 0
-            samples_index = 0
-            cpu_outputs = np.zeros((np.sum(level_sizes),self._output_size))
+            cpu_outputs = np.zeros((np.sum(level_sizes), self._output_size))
             for level, s in enumerate(level_sizes):
-                if s == 0:
-                    offset+=s
-                    continue
-                level_outputs = []
                 for i, x in enumerate(samples[offset:offset + s]):
                     if level == 0:
-                        cpu_outputs[samples_index] = self._models[level].evaluate(x)
-                    else:  #level > 0
-                        cpu_outputs[samples_index] = self._models[level].evaluate(x) - self._models[level - 1].evaluate(x)
-                    samples_index+=1
-
+                        cpu_outputs[offset + i] = self._models[level].evaluate(x)
+                    else:  # level > 0
+                        cpu_outputs[offset + i] = self._models[level].evaluate(x) - self._models[level - 1].evaluate(x)
                 offset += s
 
             # create counts tuple
-            counts = np.zeros(self._num_cpus, dtype="int")
-            for cpu_rank in range(self._num_cpus):
-                counts[cpu_rank] = np.sum(self.cpu_to_predetermined_sizes[cpu_rank])
+            counts = np.sum(cpu_to_num_samples, axis=1) * self._output_size
 
-            # create displacements tuple
-            displ = np.insert(np.cumsum(counts),0,0)[0:-1]
+            # create displacements tuple (already accounts for output dimensions)
+            displ = np.insert(np.cumsum(counts), 0, 0)[:-1]
 
-            # augment arrays to account for multi-dimension outputs
-            counts_buf = counts * self._output_size
-            displ_buf = displ * self._output_size
+            all_outputs_flattened = np.zeros((np.sum(cpu_to_num_samples), self._output_size))
 
-            all_outputs_flattened = np.zeros((np.sum(self.cpu_to_predetermined_sizes), \
-                                         self._output_size))
-           
             start_gather = timeit.default_timer()
             # Gather arrays
-            self._comm.Gatherv([cpu_outputs, MPI.DOUBLE], \
-                        [all_outputs_flattened, tuple(counts_buf), tuple(displ_buf), \
-                         MPI.DOUBLE], root=0)
+            self._comm.Gatherv([cpu_outputs, MPI.DOUBLE],
+                               [all_outputs_flattened,
+                                tuple(counts),
+                                tuple(displ),
+                                MPI.DOUBLE],
+                               root=0)
             end_gather = timeit.default_timer() - start_gather
 
+            num_samples_per_level = np.sum(cpu_to_num_samples, axis=0)
             start_unpack = timeit.default_timer()
             # unpack the gathered array into the correct format
             if self._cpu_rank == 0:
                 for level in range(self._num_levels):
-                    level_sample_size = np.sum(self.cpu_to_predetermined_sizes[:][:,level:level+1])
-                    level_outputs = np.zeros((level_sample_size,self._output_size))
-                    for cpu_rank, cpu_counts in enumerate(counts):
-                        if level == 0:
-                            all_out_start = displ[cpu_rank]
-                        else:
-                            all_out_start = displ[cpu_rank] + \
-                                np.sum(self.cpu_to_predetermined_sizes[cpu_rank][0:level])
-                        all_out_end = all_out_start + self.cpu_to_predetermined_sizes[cpu_rank][level]
-                        
-                        if cpu_rank == 0:
-                            lvl_out_start = 0 
-                        else:
-                            lvl_out_start = np.sum(self.cpu_to_predetermined_sizes[0:cpu_rank][:,level:level+1])
-                        lvl_out_end = lvl_out_start + self.cpu_to_predetermined_sizes[cpu_rank][level]
+                    level_outputs = np.zeros((num_samples_per_level[level], self._output_size))
 
-                        level_outputs[lvl_out_start:lvl_out_end] = \
-                            all_outputs_flattened[all_out_start:all_out_end]
- 
-                    # Do calculations
-                    self._estimates += np.sum(level_outputs, axis=0) / level_sample_size
-                    self._variances += np.var(level_outputs, axis=0) / level_sample_size
+                    for rank in range(self._num_cpus):
+                        all_out_start = displ[rank] + \
+                                        np.sum(cpu_to_num_samples[rank, :level]) * self._output_size
+                        all_out_end = all_out_start + cpu_to_num_samples[rank, level] * self._output_size
+
+                        lvl_out_start = np.sum(cpu_to_num_samples[:rank, level])
+                        lvl_out_end = lvl_out_start + cpu_to_num_samples[rank][level]
+
+                        level_outputs[lvl_out_start:lvl_out_end] = all_outputs_flattened[all_out_start:all_out_end]
+
+                    self._estimates += np.sum(level_outputs, axis=0) / num_samples_per_level[level]
+                    self._variances += np.var(level_outputs, axis=0) / num_samples_per_level[level]
 
             end_unpack = timeit.default_timer() - start_unpack
             if self._cpu_rank == 0:
-                print "time to gatherv: ", end_gather
-                print "time to unpack: ", end_unpack
-                print "total time to gather and process: ", end_gather + end_unpack
-            
+                print("time to gatherv: ", end_gather)
+                print("time to unpack: ", end_unpack)
+                print("total time to gather and process: ", end_gather + end_unpack)
+
         else:
             for level in range(self._num_levels):
 
@@ -582,7 +542,7 @@ class MLMCSimulator:
         :param level: int of level for which samples are to be acquired.
         :return: ndarray of input samples.
         """
-        samples = self._draw_samples(self._sample_sizes[level])
+        samples = self._draw_samples(int(self._sample_sizes[level]))
         num_samples = samples.shape[0]
 
         # Update sample sizes in case we've run short on samples.
@@ -591,9 +551,12 @@ class MLMCSimulator:
         return samples
 
 
-    def _draw_samples_with_predetermined_sizes(self):
-        assert self._num_cpus == 8
-        assert self._num_levels == 3
+    def _draw_samples_with_predetermined_sizes(self, costs):
+        cpu_to_predetermined_sizes, _ = get_job_allocation_heuristically(
+            job_counts=self._sample_sizes, costs=costs, num_workers=self._num_cpus
+        )
+        print('cpu_to_predetermined_sizes: ')
+        print(cpu_to_predetermined_sizes)
 
         # Using this sample data to distribute
         # [0.01064313 0.01886613 0.02495334]
@@ -618,24 +581,22 @@ class MLMCSimulator:
         level_sizes = self.cpu_to_predetermined_sizes[self._cpu_rank]
         num_samples_for_current_cpu = sum(level_sizes)
         '''
-        self.cpu_to_predetermined_sizes = \
-            np.array([
-             [685, 52, 1],
-             [685, 52, 1],
-             [685, 52, 1],
-             [692, 52, 0],
-             [685, 53, 0],
-             [685, 53, 0],
-             [685, 53, 0],
-             [685, 53, 0]
-            ])
-        
-        self._sample_sizes = np.sum(self.cpu_to_predetermined_sizes, axis=0)
-        level_sizes = self.cpu_to_predetermined_sizes[self._cpu_rank]
-        num_samples_for_current_cpu = np.sum(level_sizes)
-        
-        samples = self._data.draw_samples(num_samples_for_current_cpu)
-        return samples, level_sizes
+        # self.cpu_to_predetermined_sizes = \
+        #     np.array([
+        #      [685, 52, 1],
+        #      [685, 52, 1],
+        #      [685, 52, 1],
+        #      [692, 52, 0],
+        #      [685, 53, 0],
+        #      [685, 53, 0],
+        #      [685, 53, 0],
+        #      [685, 53, 0]
+        #     ])
+        #
+        # self._sample_sizes = np.sum(cpu_to_predetermined_sizes, axis=0)
+        num_samples_for_current_cpu = np.sum(cpu_to_predetermined_sizes[self._cpu_rank])
+        samples = self._data.draw_samples(int(num_samples_for_current_cpu))
+        return samples, cpu_to_predetermined_sizes
 
     def _get_sim_loop_outputs(self, samples, level):
         """
@@ -681,7 +642,7 @@ class MLMCSimulator:
         self._variances += np.var(all_output_differences, axis=0) / num_samples
         if self._cpu_rank == 0:
             end_time = timeit.default_timer() - start_time
-            print "time to gather and process values: ", end_time
+            print ("time to gather and process values: ", end_time)
 
 
     def _evaluate_sample(self, sample, level):
@@ -719,7 +680,7 @@ class MLMCSimulator:
         """
         # Compare variance for each quantity of interest to epsilon values.
         print
-        print 'Total run time: %s' % str(run_time)
+        print('Total run time: %s' % str(run_time))
         print
 
         epsilons_squared = np.square(self._epsilons)
@@ -728,10 +689,10 @@ class MLMCSimulator:
             passed = variance < epsilons_squared[i]
             estimate = estimates[i]
 
-            print 'QOI #%s: estimate: %s, variance: %s, ' \
+            print('QOI #%s: estimate: %s, variance: %s, ' \
                   'epsilon^2: %s, met target precision: %s' % \
                   (i, float(estimate), float(variance),
-                   float(epsilons_squared[i]), passed)
+                   float(epsilons_squared[i]), passed))
 
     def _determine_input_output_size(self):
         """
@@ -999,4 +960,4 @@ class MLMCSimulator:
 
         time_delta = timedelta(seconds=seconds)
 
-        print 'Estimated simulation time: %s' % str(time_delta)
+        print('Estimated simulation time: %s' % str(time_delta))

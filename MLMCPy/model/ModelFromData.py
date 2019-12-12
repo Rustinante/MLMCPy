@@ -3,7 +3,7 @@ import numbers
 import os
 import time
 
-from Model import Model
+from MLMCPy.model.Model import Model
 
 
 class ModelFromData(Model):

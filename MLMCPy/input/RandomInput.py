@@ -1,6 +1,6 @@
 import numpy as np
 
-from Input import Input
+from MLMCPy.input.Input import Input
 
 
 class RandomInput(Input):

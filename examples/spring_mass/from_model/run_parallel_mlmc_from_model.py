@@ -5,7 +5,6 @@ from mpi4py import MPI
 from spring_mass_model import SpringMassModel
 from MLMCPy.input import RandomInput
 from MLMCPy.mlmc import MLMCSimulator
-from MLMCPy.mlmc import MLMCSimulator2
 
 '''
 This script demonstrates MLMCPy for simulating a spring-mass system with a 
@@ -19,32 +18,6 @@ For 8 processes, run from command line with something like:
 mpiexec -n 8 python run_parallel_mlmc_from_model.py 
 '''
 
-# Set up MPI communicator for running in parallel
-comm = MPI.COMM_WORLD.Clone()
-rank = comm.Get_rank()   #this processors number/identifier (int) 
-size = comm.Get_size()   #total number of processors
-
-##########################################
-# Step 1 - Establish Setup Parameters
-
-## Global Input Parameters
-num_samples = 5000  #for Monte Carlo only
-low_timestep = 1.0
-mid_timestep = 0.1
-high_timestep = 0.01  #used by Monte Carlo
-precision_mc = 0.0017089012209586753  #will be reset if Monte Carlo is run
-    # 0.0017089012209586753 is the precision from running 
-    # MC w/ 5000 samples @ dt0.01
-
-# Define random variable for spring stiffness:
-# Need to provide a sampleable function to create RandomInput instance in MLMCPy
-def beta_distribution(shift, scale, alpha, beta, size):
-    return shift + scale*np.random.beta(alpha, beta, size)
-
-np.random.seed(1)
-stiffness_distribution = RandomInput(distribution_function=beta_distribution,
-                                     shift=1.0, scale=2.5, alpha=3., beta=2.,
-                                     random_seed=1)
 '''
 ##########################################
 # Step 2: Serial Monte Carlo
@@ -200,143 +173,128 @@ if rank == 0:
     print "CANNOT RUN SERIAL MLMCPY IN SAME SCRIPT AS" 
     print "PARALLEL MLMCPY. Sorry!\n"
 '''
-comm.Barrier()
-#####################################################
-# Step 4: PARALLEL - Original MLMCPy Monte Carlo Simulation
-# Use to generate a baseline reference for time and accuracy
-
-precision_mc = 0.0017089012209586753 / 100
-
-stiffness_distribution.reset_sampling()
-
-if rank == 0:
-    print "\n################# TEST 4 ###################"
-    print "Starting Parallel MLMCPy comparisons..."
-    orig_mlmc_total_cost = timeit.default_timer()
-
-# Initialize spring-mass models for MLMC. Here using three levels 
-# with MLMC defined by different time steps
-model_level1 = SpringMassModel(mass=1.5, time_step=low_timestep)
-model_level2 = SpringMassModel(mass=1.5, time_step=mid_timestep)
-model_level3 = SpringMassModel(mass=1.5, time_step=high_timestep)
-
-models = [model_level1, model_level2, model_level3]
-
-# Initialize MLMC & predict max displacement to specified precision
-mlmc_simulator = MLMCSimulator(stiffness_distribution, models, orig_mlmc=True)
-
-local_mlmc_cost = timeit.default_timer()
-
-[estimates, sample_sizes, variances] = \
-    mlmc_simulator.simulate(epsilon=np.sqrt(precision_mc),
-                            initial_sample_sizes=100,
-                            verbose=True,
-            #                sample_sizes = [5487, 420, 3]
-                            )
-
-local_mlmc_cost = np.array([timeit.default_timer() - local_mlmc_cost])
-
-orig_mlmc_max_cost=np.zeros(1)
-orig_mlmc_min_cost=np.zeros(1)
-orig_mlmc_sum_cost=np.zeros(1)
-comm.Reduce(local_mlmc_cost, orig_mlmc_max_cost, op=MPI.MAX, root=0)
-comm.Reduce(local_mlmc_cost, orig_mlmc_min_cost, op=MPI.MIN, root=0)
-comm.Reduce(local_mlmc_cost, orig_mlmc_sum_cost, op=MPI.SUM, root=0)
-
-#Summarize results:
-if rank == 0:
-    orig_mlmc_total_cost = timeit.default_timer() - orig_mlmc_total_cost
-    print "\nSUMMARY OF ORIGINAL PARALLEL MLMCPY:"
-    print 'Original MLMC sample sizes used: ', sample_sizes
-    print 'Original MLMC estimate: %s' % estimates[0]
-    print 'Original MLMC precision: %s' % variances[0]
-
-    print "Max single-cpu computation time: ", orig_mlmc_max_cost[0]
-    print "Min single-cpu computation time: ", orig_mlmc_min_cost[0]
-    print "Avg single-cpu computation time: ", orig_mlmc_sum_cost[0]/size
-    print 'Original MLMC total cost: %s' % orig_mlmc_total_cost
-
-comm.Barrier()
-
-#####################################################
-# Step 5: PARALLEL - Original MLMCPy Monte Carlo Simulation
-# Use to generate a baseline reference of parallel timing
-
-stiffness_distribution.reset_sampling()
-
-if rank == 0:
-    print "\n################# TEST 5 ###################"
-    NEW_mlmc_total_cost = timeit.default_timer()
-
-# Initialize spring-mass models for MLMC. Here using three levels 
-# with MLMC defined by different time steps
-NEW_model_level1 = SpringMassModel(mass=1.5, time_step=low_timestep)
-NEW_model_level2 = SpringMassModel(mass=1.5, time_step=mid_timestep)
-NEW_model_level3 = SpringMassModel(mass=1.5, time_step=high_timestep)
-
-NEW_models = [model_level1, model_level2, model_level3]
-
-# Initialize MLMC & predict max displacement to specified precision
-NEW_mlmc_simulator = MLMCSimulator(stiffness_distribution, NEW_models, \
-                                    orig_mlmc=False)
-
-NEW_local_mlmc_cost = timeit.default_timer()
-
-[NEW_estimates, NEW_sample_sizes, NEW_variances] = \
-    NEW_mlmc_simulator.simulate(epsilon=np.sqrt(precision_mc),
-                            initial_sample_sizes=100,
-                            verbose=True, orig_mlmc=False)
-
-NEW_local_mlmc_cost = np.array([timeit.default_timer() - NEW_local_mlmc_cost])
-
-NEW_mlmc_max_cost=np.zeros(1)
-NEW_mlmc_min_cost=np.zeros(1)
-NEW_mlmc_sum_cost=np.zeros(1)
-comm.Reduce(NEW_local_mlmc_cost, NEW_mlmc_max_cost, op=MPI.MAX, root=0)
-comm.Reduce(NEW_local_mlmc_cost, NEW_mlmc_min_cost, op=MPI.MIN, root=0)
-comm.Reduce(NEW_local_mlmc_cost, NEW_mlmc_sum_cost, op=MPI.SUM, root=0)
-
-#Summarize results:
-if rank == 0:
-    NEW_mlmc_total_cost = timeit.default_timer() - NEW_mlmc_total_cost
-    print "\nSUMMARY OF NEW PARALLEL MLMCPY:"
-    print 'NEW MLMC sample sizes used: ', sample_sizes
-    print 'NEW MLMC estimate: %s' % estimates[0]
-    print 'NEW MLMC precision: %s' % variances[0]
-
-    print "Max single-cpu computation time: ", NEW_mlmc_max_cost[0]
-    print "Min single-cpu computation time: ", NEW_mlmc_min_cost[0]
-    print "Avg single-cpu computation time: ", NEW_mlmc_sum_cost[0]/size
-    print 'NEW MLMC total cost: %s' % NEW_mlmc_total_cost
-
-comm.Barrier()
-#####################################################
-# Step 6: Final speedup comparisons
-# Display the overall speedup results from all runs
-if rank == 0:
-    print "\n################# SPEEDUP SUMMARY ###################"
-
-#    print "Serial MC vs. Parallel MC Total speedup: ", \
-#                ser_mc_total_cost / par_mc_total_cost
-#    print "Serial MC vs. Parallel MC Computational speedup: ", \
-#                ser_mc_computational_cost / par_mc_max_cost[0]
-#    print
-#    print "Parallel MC vs. Original MLMC Total Speedup: ", \
-#                par_mc_total_cost / orig_mlmc_total_cost
-#    print "Parallel MC vs. Original MLMC Computational Speedup: ", \
-#                par_mc_max_cost[0] / orig_mlmc_max_cost[0]
-#    print
-#    print "Parallel MC vs. NEW MLMC Total Speedup: ", \
-#                par_mc_total_cost / NEW_mlmc_total_cost
-#    print "Parallel MC vs. NEW MLMC Computational Speedup: ", \
-#                par_mc_max_cost[0] / NEW_mlmc_max_cost[0]
-#    print
-    print "Original MLMC vs. NEW MLMC Total Speedup: ", \
-                orig_mlmc_total_cost / NEW_mlmc_total_cost
-    print "Original MLMC vs. NEW MLMC Computational Speedup: ", \
-                orig_mlmc_max_cost[0] / NEW_mlmc_max_cost[0]
 
 
+def test_old_or_new_mlmc(use_original_mlmc):
+    #####################################################
+    # Step 5: PARALLEL - Original MLMCPy Monte Carlo Simulation
+    # Use to generate a baseline reference of parallel timing
+
+    prefix = "Original" if use_original_mlmc else "NEW"
+    if rank == 0:
+        print(f"\n################# TEST {prefix} MLMC ###################")
+
+    stiffness_distribution.reset_sampling()
+    setup_start_time = timeit.default_timer()
+
+    # Initialize spring-mass models for MLMC. Here using three levels
+    # with MLMC defined by different time steps
+    new_model_l1 = SpringMassModel(mass=1.5, time_step=low_timestep)
+    new_model_l2 = SpringMassModel(mass=1.5, time_step=mid_timestep)
+    new_model_l3 = SpringMassModel(mass=1.5, time_step=high_timestep)
 
 
+    NEW_models = [new_model_l1, new_model_l2, new_model_l3]
 
+    # Initialize MLMC & predict max displacement to specified precision
+    NEW_mlmc_simulator = MLMCSimulator(stiffness_distribution, NEW_models, \
+                                        orig_mlmc=use_original_mlmc)
+
+    begin_sim_time = timeit.default_timer()
+
+    NEW_estimates, NEW_sample_sizes, NEW_variances = NEW_mlmc_simulator.simulate(
+        epsilon=np.sqrt(precision_mc),
+        initial_sample_sizes=100,
+        verbose=True, orig_mlmc=False)
+
+    setup_time = np.array([begin_sim_time - setup_start_time])
+    total_sim_time_local = np.array([timeit.default_timer() - begin_sim_time])
+
+    def print_time_stats(dt, label):
+        new_mlmc_max_cost = np.zeros(1)
+        new_mlmc_min_cost = np.zeros(1)
+        new_mlmc_sum_cost = np.zeros(1)
+        comm.Reduce(dt, new_mlmc_max_cost, op=MPI.MAX, root=0)
+        comm.Reduce(dt, new_mlmc_min_cost, op=MPI.MIN, root=0)
+        comm.Reduce(dt, new_mlmc_sum_cost, op=MPI.SUM, root=0)
+
+        #Summarize results:
+        if rank == 0:
+            print(f"\nSUMMARY OF {prefix} PARALLEL MLMCPY:")
+            print(f'{prefix} MLMC sample sizes used: ', NEW_sample_sizes)
+            print(f'{prefix} MLMC estimate: %s' % NEW_estimates[0])
+            print(f'{prefix} MLMC precision: %s' % NEW_variances[0])
+
+            print(f"Max single-cpu {label} time: ", new_mlmc_max_cost[0])
+            print(f"Min single-cpu {label} time: ", new_mlmc_min_cost[0])
+            print(f"Avg single-cpu {label} time: ", new_mlmc_sum_cost[0] / size)
+
+        return new_mlmc_max_cost
+
+    setup_max_time = print_time_stats(setup_time, "setup")
+    sim_max_time = print_time_stats(total_sim_time_local, "simulation")
+    return setup_max_time, sim_max_time
+
+
+if __name__ == '__main__':
+    # Set up MPI communicator for running in parallel
+    comm = MPI.COMM_WORLD.Clone()
+    rank = comm.Get_rank()  # this processors number/identifier (int)
+    size = comm.Get_size()  # total number of processors
+
+    ##########################################
+    # Step 1 - Establish Setup Parameters
+
+    ## Global Input Parameters
+    num_samples = 5000  # for Monte Carlo only
+    low_timestep = 1.0
+    mid_timestep = 0.1
+    high_timestep = 0.01  # used by Monte Carlo
+    precision_mc = 0.0017089012209586753  # will be reset if Monte Carlo is run
+
+
+    # 0.0017089012209586753 is the precision from running
+    # MC w/ 5000 samples @ dt0.01
+
+    # Define random variable for spring stiffness:
+    # Need to provide a sampleable function to create RandomInput instance in MLMCPy
+    def beta_distribution(shift, scale, alpha, beta, size):
+        return shift + scale * np.random.beta(alpha, beta, size)
+
+
+    np.random.seed(1)
+    stiffness_distribution = RandomInput(distribution_function=beta_distribution,
+                                         shift=1.0, scale=2.5, alpha=3., beta=2.,
+                                         random_seed=1)
+
+    original_setup_max_time, original_sim_max_time = test_old_or_new_mlmc(use_original_mlmc=True)
+    comm.Barrier()
+    new_setup_max_time, new_sim_max_time = test_old_or_new_mlmc(use_original_mlmc=False)
+    comm.Barrier()
+
+    #####################################################
+    # Step 6: Final speedup comparisons
+    # Display the overall speedup results from all runs
+    if rank == 0:
+        print("\n################# SPEEDUP SUMMARY ###################")
+
+        #    print "Serial MC vs. Parallel MC Total speedup: ", \
+        #                ser_mc_total_cost / par_mc_total_cost
+        #    print "Serial MC vs. Parallel MC Computational speedup: ", \
+        #                ser_mc_computational_cost / par_mc_max_cost[0]
+        #    print
+        #    print "Parallel MC vs. Original MLMC Total Speedup: ", \
+        #                par_mc_total_cost / orig_mlmc_total_cost
+        #    print "Parallel MC vs. Original MLMC Computational Speedup: ", \
+        #                par_mc_max_cost[0] / orig_mlmc_max_cost[0]
+        #    print
+        #    print "Parallel MC vs. NEW MLMC Total Speedup: ", \
+        #                par_mc_total_cost / NEW_mlmc_total_cost
+        #    print "Parallel MC vs. NEW MLMC Computational Speedup: ", \
+        #                par_mc_max_cost[0] / NEW_mlmc_max_cost[0]
+        #    print
+
+        print("Original MLMC vs. NEW MLMC Total Speedup: ",
+              (original_setup_max_time + original_sim_max_time) / (new_setup_max_time + new_sim_max_time)
+              )
+        print("Original MLMC vs. NEW MLMC Computational Speedup: ", original_sim_max_time / new_sim_max_time)

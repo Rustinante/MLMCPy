@@ -1,2 +1,2 @@
-from MLMCSimulator import MLMCSimulator
-from MLMCSimulator2 import MLMCSimulator2
+from MLMCPy.mlmc.MLMCSimulator import MLMCSimulator
+from MLMCPy.mlmc.MLMCSimulator2 import MLMCSimulator2

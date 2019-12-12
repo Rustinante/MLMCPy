@@ -118,5 +118,5 @@ sim_estimate, sim_sample_sizes, output_variances = \
 sim_costs, sim_variances = sim._compute_costs_and_variances()
 
 assert np.array_equal(np.squeeze(sim_variances), hard_coded_variances)
-assert np.array_equal(sim._sample_sizes, hard_coded_sample_sizes)
+assert np.array_equal(sim.sample_sizes, hard_coded_sample_sizes)
 assert np.array_equal(sim_estimate[0], hard_coded_estimate)

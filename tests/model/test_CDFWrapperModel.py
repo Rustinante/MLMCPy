@@ -241,18 +241,18 @@ def test_output_caching_cdf_wrapper(initial_sample_size, data_input,
         cached_sim.simulate(epsilon=.05,
                             initial_sample_sizes=initial_sample_size)
 
-    cached_inputs_caching = np.copy(cached_sim._cached_inputs)
-    cached_outputs_caching = np.copy(cached_sim._cached_outputs)
+    cached_inputs_caching = np.copy(cached_sim.cached_inputs)
+    cached_outputs_caching = np.copy(cached_sim.cached_outputs)
 
     # Collect same data with caching disabled.
     uncached_sim = MLMCSimulator(data_input, cdfws)
-    uncached_sim._caching_enabled = False
+    uncached_sim.caching_enabled = False
     uncached_cdf, uncached_sample_sizes, uncached_variances = \
         uncached_sim.simulate(epsilon=.05,
                               initial_sample_sizes=initial_sample_size)
 
-    cached_inputs_no_caching = np.copy(uncached_sim._cached_inputs)
-    cached_outputs_no_caching = np.copy(uncached_sim._cached_outputs)
+    cached_inputs_no_caching = np.copy(uncached_sim.cached_inputs)
+    cached_outputs_no_caching = np.copy(uncached_sim.cached_outputs)
 
     assert np.array_equal(cached_inputs_caching, cached_inputs_no_caching)
     assert np.array_equal(cached_outputs_caching, cached_outputs_no_caching)
@@ -283,7 +283,7 @@ def test_sim_evaluate_returns_expected_results_from_data(initial_sample_size,
     cdfws = [cdfw_level1, cdfw_level2, cdfw_level3]
 
     mlmc_simulator = MLMCSimulator(data_input, cdfws)
-    mlmc_simulator._caching_enabled = False
+    mlmc_simulator.caching_enabled = False
     cdf, sample_sizes, variances = \
         mlmc_simulator.simulate(epsilon=2.5e-2,
                                 initial_sample_sizes=initial_sample_size)

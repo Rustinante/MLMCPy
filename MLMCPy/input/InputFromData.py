@@ -54,8 +54,8 @@ class InputFromData(Input):
                  shape (num_samples, 1)
         """
 
-        if not isinstance(num_samples, int):
-            raise TypeError("num_samples must be an integer.")
+        if not isinstance(num_samples, (int, np.int32, np.int64, np.uint64)):
+            raise TypeError(f'num_samples must be an integer. Received {type(num_samples)}')
 
         if num_samples <= 0:
             raise ValueError("num_samples must be a positive integer.")

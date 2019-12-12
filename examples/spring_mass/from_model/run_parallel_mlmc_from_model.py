@@ -185,7 +185,7 @@ def test_old_or_new_mlmc(use_original_mlmc, data_distribution, models, precision
     setup_start_time = timeit.default_timer()
 
     # Initialize MLMC & predict max displacement to specified precision
-    simulator = MLMCSimulator(data_distribution, models, orig_mlmc=use_original_mlmc)
+    simulator = MLMCSimulator(data_distribution, models, use_original_mlmc=use_original_mlmc)
 
     begin_sim_time = timeit.default_timer()
 

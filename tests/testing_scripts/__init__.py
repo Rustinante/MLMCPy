@@ -1,3 +1,3 @@
-from InputForTesting import InputForTesting
-from ModelForTesting import ModelForTesting
-from spring_mass import SpringMassModel
+from tests.testing_scripts.InputForTesting import InputForTesting
+from tests.testing_scripts.ModelForTesting import ModelForTesting
+from tests.testing_scripts.spring_mass import SpringMassModel

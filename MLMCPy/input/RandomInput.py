@@ -43,7 +43,7 @@ class RandomInput(Input):
             available, will return a subset of sample determined by number
             of CPUs.
         """
-        if not isinstance(num_samples, int):
+        if not isinstance(num_samples, (int, np.int32, np.int64, np.uint32, np.uint64)):
             raise TypeError("num_samples must be an integer.")
 
         if num_samples <= 0:

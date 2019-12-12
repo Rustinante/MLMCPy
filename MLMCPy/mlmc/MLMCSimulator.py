@@ -153,15 +153,11 @@ class MLMCSimulator:
             if self.num_cpus == 1:
                 all_outputs = self.cached_outputs
             else:
-                all_outputs_tmp = np.zeros(
-                    (self.num_levels * self.initial_sample_sizes[0], self.output_size)
-                )
+                all_outputs_tmp = np.zeros((self.num_levels * self.initial_sample_sizes[0], self.output_size))
 
                 # create count vector
-                num_residual_samples = self.initial_sample_sizes[0] % self.num_cpus
-                counts = np.ones(self.num_cpus, dtype='int') * (self.initial_sample_sizes[0] // self.num_cpus)
-                for rank in range(num_residual_samples):
-                    counts[rank] += 1
+                counts = np.ones(self.num_cpus, dtype='int64') * (self.initial_sample_sizes[0] // self.num_cpus)
+                counts[:self.initial_sample_sizes[0] % self.num_cpus] += 1
 
                 # create displacements vector
                 displ = np.insert(np.cumsum(counts), 0, 0)[:-1]
@@ -178,9 +174,7 @@ class MLMCSimulator:
                 )
 
                 # unpack the gathered array into the correct format
-                all_outputs = np.zeros((self.num_levels,
-                                        self.initial_sample_sizes[0],
-                                        self.output_size))
+                all_outputs = np.zeros((self.num_levels, self.initial_sample_sizes[0], self.output_size))
 
                 for rank, num_cpu_samples in enumerate(counts):
                     cpu_start_index = displ[rank] * self.num_levels
@@ -260,8 +254,7 @@ class MLMCSimulator:
             costs = self._get_costs_from_models()
         else:
             # Compute costs based on compute time differences between levels.
-            costs = compute_times / self._cpu_initial_sample_sizes  # \
-            #  * self.num_cpus
+            costs = compute_times / self._cpu_initial_sample_sizes
 
         costs = self._mean_over_all_cpus(costs)
 
@@ -274,30 +267,16 @@ class MLMCSimulator:
         """
         :return: bool indicating whether the models all have a cost attribute.
         """
-        model_cost_defined = True
-        for model in self.models:
-
-            model_cost_defined = model_cost_defined and hasattr(model, 'cost')
-
-            if not model_cost_defined:
-                return False
-
-            model_cost_defined = model_cost_defined and model.cost is not None
-
-        return model_cost_defined
+        return False not in set(hasattr(m, 'cost') and m.cost is not None for m in self.models)
 
     def _get_costs_from_models(self):
         """
         Collect cost value from each model.
         :return: ndarray of costs.
         """
-        costs = np.ones(self.num_levels)
-        for i, model in enumerate(self.models):
-            costs[i] = model.cost
-
+        costs = np.array([m.cost for m in self.models])
         # Costs at level > 0 should be summed with previous level.
         costs[1:] = costs[1:] + costs[:-1]
-
         return costs
 
     def _compute_optimal_sample_sizes(self, costs, variances):
@@ -381,7 +360,6 @@ class MLMCSimulator:
         # If the difference is greater than the lowest cost model, adjust
         # the sample sizes.
         if abs(difference) > costs[0]:
-
             # Start with highest cost model and add samples in order to fill
             # the cost gap as much as possible.
             for i in range(len(costs) - 1, -1, -1):
@@ -498,32 +476,19 @@ class MLMCSimulator:
 
         else:
             for level in range(self.num_levels):
-
                 if self.sample_sizes[level] == 0:
                     continue
 
-                samples = self._get_sim_loop_samples(level)
+                samples = self._draw_samples(self.sample_sizes[level])
+
+                # Update sample sizes in case we've run short on samples.
+                self._cpu_sample_sizes[level] = samples.shape[0]
                 output_differences = self._get_sim_loop_outputs(samples, level)
                 self._update_sim_loop_values(
                     output_differences, level, acc_estimates=estimates, acc_variances=variances
                 )
 
         return estimates, variances
-
-    def _get_sim_loop_samples(self, level):
-        """
-        Acquires input samples for designated level.
-
-        :param level: int of level for which samples are to be acquired.
-        :return: ndarray of input samples.
-        """
-        samples = self._draw_samples(int(self.sample_sizes[level]))
-        num_samples = samples.shape[0]
-
-        # Update sample sizes in case we've run short on samples.
-        self._cpu_sample_sizes[level] = num_samples
-
-        return samples
 
     def _draw_samples_with_predetermined_sizes(self, costs):
         cpu_to_predetermined_sizes, _ = get_job_allocation_heuristically(

@@ -23,18 +23,15 @@ class MLMCSimulator:
         Requires a data object that provides input samples and a list of models
         of increasing fidelity.
 
-        :param data: Provides a data sampling function.
         :type data: Input
-        :param models: Each model Produces outputs from sample data input.
         :type models: list(Model)
         """
-        # Detect whether we have access to multiple CPUs.
-        self._detect_parallelization()
+        self._initialize_mpi()
 
         self.data = data
         self.models = models
         self.num_levels = len(self.models)
-        self._check_init_parameters(data, models)
+        self._typecheck_data_models(data, models)
 
         # Use the original MLMC code (or an optimized parallelization version)
         self.use_original_mlmc = use_original_mlmc
@@ -96,32 +93,21 @@ class MLMCSimulator:
 
         if sample_sizes is None:
             self.initial_sample_sizes = self._convert_sample_sizes_to_np_array(initial_sample_sizes)
-
-        cost_var_estimates = self.setup_simulation(epsilon, sample_sizes)
-
-        return self._run_simulation(cost_var_estimates)
-
-    def setup_simulation(self, epsilon, sample_sizes):
-        """
-        Performs any necessary manipulation of epsilon and initial_sample_sizes.
-        Computes variance and cost at each level in order to estimate optimal
-        number of samples at each level.
-
-        :param epsilon: Epsilon values for each quantity of interest.
-        """
-        if sample_sizes is None:
             self.set_epsilon(epsilon)
 
             costs, variances = self._compute_costs_and_variances()
             self._compute_optimal_sample_sizes(costs, variances)
             self.caching_enabled = False
-            return costs, variances
+            cost_var_estimates = costs, variances
 
         else:
             self._target_cost = None
             self.caching_enabled = False
             sample_sizes = self._convert_sample_sizes_to_np_array(sample_sizes, initial_samples=False)
             self._process_sample_sizes(sample_sizes, None)
+            cost_var_estimates = None
+
+        return self._run_simulation(cost_var_estimates)
 
     def _compute_costs_and_variances(self):
         """
@@ -392,24 +378,7 @@ class MLMCSimulator:
         self.data.reset_sampling()
 
         start_time = timeit.default_timer()
-        estimates, variances = self._run_simulation_loop(cost_var_estimates)
-        run_time = timeit.default_timer() - start_time
 
-        if self.verbose:
-            self._show_summary_data(estimates, variances, run_time)
-
-        return estimates, self.sample_sizes, variances
-
-    def _run_simulation_loop(self, cost_var_estimates):
-        """
-        Main simulation loop where sample sizes determined in setup phase are
-        drawn from the input data and run through the models. Values for
-        computing the estimates and variances are accumulated at each level.
-
-        :return: tuple containing two ndarrays:
-            estimates: Estimates for each quantity of interest.
-            variances: Variance of model outputs at each level.
-        """
         estimates, variances = self.get_zero_initialized_estimates_and_variances()
 
         if not self.use_original_mlmc:
@@ -488,7 +457,12 @@ class MLMCSimulator:
                     output_differences, level, acc_estimates=estimates, acc_variances=variances
                 )
 
-        return estimates, variances
+        run_time = timeit.default_timer() - start_time
+
+        if self.verbose:
+            self._show_summary_data(estimates, variances, run_time)
+
+        return estimates, self.sample_sizes, variances
 
     def _draw_samples_with_predetermined_sizes(self, costs):
         cpu_to_predetermined_sizes, _ = get_job_allocation_heuristically(
@@ -659,7 +633,7 @@ class MLMCSimulator:
 
         return verified_sample_sizes
 
-    def _check_init_parameters(self, data, models):
+    def _typecheck_data_models(self, data, models):
         if not isinstance(data, Input):
             raise TypeError("data must a subclass of Input.")
 
@@ -714,7 +688,7 @@ class MLMCSimulator:
 
         return samples
 
-    def _detect_parallelization(self):
+    def _initialize_mpi(self):
         """
         Detects whether multiple processors are available and sets
         self.number_CPUs and self.cpu_rank accordingly.

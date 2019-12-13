@@ -1,6 +1,5 @@
 import argparse
 import timeit
-from copy import deepcopy
 
 import numpy as np
 from mpi4py import MPI

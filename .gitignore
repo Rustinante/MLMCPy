@@ -5,4 +5,4 @@ MLMCPy/model/*.pyc
 MLMCPy/mlmc/*.pyc
 .idea
 __pycache__
-
+venv/

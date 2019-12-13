@@ -18,7 +18,7 @@ objects with functional forms as inputs to MLMCPy. See the
 in files as inputs.
 
 For 8 processes, run from command line with something like:
-mpiexec -n 8 python run_parallel_mlmc_from_model.py 
+mpiexec -n 8 python3 run_parallel_mlmc_from_model.py projectile
 '''
 
 '''
@@ -84,7 +84,7 @@ if rank == 0:
 '''
 
 
-def test_serial_monte_carlo(data_distribution, model, num_samples, comm):
+def test_parallel_monte_carlo(data_distribution, model, num_samples, comm):
     # Parallel Monte Carlo
     # Run parallelized standard Monte Carlo to generate a reference solution and target
     # precision.  This is to ensure that the parallel output matches the serial output.
@@ -297,19 +297,20 @@ if __name__ == '__main__':
             def draw_samples(self, num_samples):
                 # height, launch_speed, launch_angle
                 return np.tile(np.array([200, 2.92, 30]), (num_samples, 1)) \
-                       + np.random.uniform(low=-1, high=1, size=(num_samples, 3)) * np.array([[0.001, 0.001, 0.05]])
+                        + np.random.normal(size=(num_samples, 3)) * np.array([[0.001, 0.001, 0.05]])
+                       # + np.random.uniform(low=-1, high=1, size=(num_samples, 3)) * np.array([[0.001, 0.001, 0.05]])
 
             def reset_sampling(self):
                 pass
 
 
-        serial_mc_model = Projectile(10000)
+        serial_mc_model = Projectile(100000)
 
         models = [
-            Projectile(10000),
             Projectile(100000),
             Projectile(1000000),
             Projectile(2000000),
+            Projectile(3000000),
         ]
 
         distribution = ProjectileRandomInput()
@@ -318,12 +319,15 @@ if __name__ == '__main__':
     else:
         raise ValueError(f"unrecognized model type: {model_type}")
 
-    serial_mc_num_samples = 1000
+    serial_mc_num_samples = 100
     np.random.seed(1)
-    mean_mc, precision_mc = test_serial_monte_carlo(
+    comm.Barrier()
+    mean_mc, precision_mc = test_parallel_monte_carlo(
         data_distribution=distribution, model=serial_mc_model, num_samples=serial_mc_num_samples, comm=comm
     )
-    print(f'target precision_mc: {precision_mc}')
+    if comm.rank == 0:
+        print(f'target precision_mc: {precision_mc}')
+    comm.Barrier()
 
     np.random.seed(1)
     original_setup_max_time, original_sim_max_time = test_old_or_new_mlmc(

@@ -1,5 +1,6 @@
 import argparse
 import timeit
+from copy import deepcopy
 
 import numpy as np
 from mpi4py import MPI
@@ -67,101 +68,7 @@ comm.Barrier()
 
 
 ##########################################
-# Step 3: Parallel Monte Carlo
-# Run parallelized standard Monte Carlo to generate a reference solution and target 
-# precision.  This is to ensure that the parallel output matches the serial output.
 
-# This is done through a simple (though static) algorithm.
-# Reference 1: https://stackoverflow.com/questions/36025188/along-what-axis-does-mpi4py-scatterv-function-split-a-numpy-array/36082684#36082684
-# Reference 2: https://materials.jeremybejarano.com/MPIwithPython/collectiveCom.html
-# TODO - try dynamic scheduling?
-
-if rank == 0:
-    print "\n################# TEST 2 ###################"
-    par_mc_total_cost = timeit.default_timer()
-
-stiffness_distribution.reset_sampling()
-model = SpringMassModel(mass=1.5, time_step=high_timestep)
-
-if rank == 0:
-    input_samples = stiffness_distribution.draw_samples(num_samples)
-
-    #Split input array by the number of available cores
-    split_input_data = np.array_split(input_samples, size, axis=0)
-
-    # create an array of the number of input samples each core gets
-    split_send_counts = np.zeros(0, int)
-    for i in range(0,len(split_input_data),1):
-        split_send_counts = np.append(split_send_counts, len(split_input_data[i]))
-
-    # make an array containing the number of elements away from the first
-    # element in the array as which to begin the new, segemented array.
-    split_displacements = np.insert(np.cumsum(split_send_counts),0,0)[0:-1]
-
-else:
-    #initialize the variables on the other ranks
-    input_samples=None
-    split_input_data=None
-    split_send_counts=None
-    split_displacements=None
-
-# Broadcast the arrays to all of the ranks
-split_send_counts = comm.bcast(split_send_counts, root=0)
-split_displacements = comm.bcast(split_displacements, root=0)
-
-#create arrays to store this ranks's subset of the data
-this_rank_input_samples = np.zeros(split_send_counts[rank])
-this_rank_output_samples = np.zeros(split_send_counts[rank])
-
-# Scatter the data to all of the CPUs
-comm.Scatterv([input_samples, tuple(split_send_counts), 
-                tuple(split_displacements), MPI.DOUBLE], 
-                this_rank_input_samples, root=0)
-
-# Do the computations
-local_start_mc = timeit.default_timer()
-
-for i, sample in enumerate(this_rank_input_samples):
-    this_rank_output_samples[i] = model.evaluate([sample])
-
-local_total_cost = np.array([timeit.default_timer() - local_start_mc])
-
-# Gather the data back to rank 0
-if rank == 0:
-    output_samples_mc = np.zeros(num_samples)
-else:
-    output_samples_mc = None
-
-comm.Gatherv(this_rank_output_samples, [output_samples_mc, 
-                tuple(split_send_counts), tuple(split_displacements), 
-                MPI.DOUBLE], root=0)
-
-# Gather and Report summary statistics 
-par_mc_max_cost=np.zeros(1)
-par_mc_min_cost=np.zeros(1)
-par_mc_sum_cost=np.zeros(1)
-comm.Reduce(local_total_cost, par_mc_max_cost, op=MPI.MAX, root=0)
-comm.Reduce(local_total_cost, par_mc_min_cost, op=MPI.MIN, root=0)
-comm.Reduce(local_total_cost, par_mc_sum_cost, op=MPI.SUM, root=0)
-
-if rank == 0:
-    print "\nSUMMARY OF PARALLEL MONTE CARLO:"
-    par_mean_mc = np.mean(output_samples_mc)
-    par_mc_total_cost = timeit.default_timer() - par_mc_total_cost
-    print "Mean of the Monte Carlo output samples: ", par_mean_mc
-    par_precision_mc = (np.var(output_samples_mc) / float(num_samples))
-    print "Target precision: ", par_precision_mc
-
-    print "Max single-cpu computation time: ", par_mc_max_cost[0]
-    print "Min single-cpu computation time: ", par_mc_min_cost[0]
-    print "Avg single-cpu computation time: ", par_mc_sum_cost[0]/size
-    print "Total Parallel MC time: ", par_mc_total_cost
-else:
-    par_mean_mc=None
-    par_precision_mc=None
-
-mean_mc = comm.bcast(par_mean_mc, root=0)
-precision_mc = comm.bcast(par_precision_mc, root=0)
 
 comm.Barrier()
 
@@ -176,6 +83,123 @@ if rank == 0:
     print "CANNOT RUN SERIAL MLMCPY IN SAME SCRIPT AS" 
     print "PARALLEL MLMCPY. Sorry!\n"
 '''
+
+
+def test_serial_monte_carlo(data_distribution, model, num_samples, comm):
+    # Parallel Monte Carlo
+    # Run parallelized standard Monte Carlo to generate a reference solution and target
+    # precision.  This is to ensure that the parallel output matches the serial output.
+
+    # This is done through a simple (though static) algorithm.
+    # Reference 1: https://stackoverflow.com/questions/36025188/along-what-axis-does-mpi4py-scatterv-function-split-a-numpy-array/36082684#36082684
+    # Reference 2: https://materials.jeremybejarano.com/MPIwithPython/collectiveCom.html
+    # TODO - try dynamic scheduling?
+    rank = comm.Get_rank()
+    num_cpus = comm.Get_size()
+    if rank == 0:
+        print("\n################# TEST 2 ###################")
+        start_time = timeit.default_timer()
+
+    data_distribution.reset_sampling()
+
+    cpu_to_num_samples = np.ones(num_cpus, dtype='int64') * (num_samples // num_cpus)
+    cpu_to_num_samples[:num_samples % num_cpus] += 1
+    split_displacements = np.insert(np.cumsum(cpu_to_num_samples), 0, 0)[:-1]
+    num_local_samples = cpu_to_num_samples[rank]
+
+    np.random.seed(rank)
+    input_samples = data_distribution.draw_samples(num_local_samples)
+
+    '''
+    if rank == 0:
+        input_samples = data_distribution.draw_samples(num_samples)
+
+        # Split input array by the number of available cores
+        split_input_data = np.array_split(input_samples, num_cpus, axis=0)
+
+        # create an array of the number of input samples each core gets
+        split_send_counts = np.zeros(0, int)
+        for i in range(0, len(split_input_data), 1):
+            split_send_counts = np.append(split_send_counts, len(split_input_data[i]))
+
+        # make an array containing the number of elements away from the first
+        # element in the array as which to begin the new, segemented array.
+        split_displacements = np.insert(np.cumsum(split_send_counts), 0, 0)[0:-1]
+
+    else:
+        # initialize the variables on the other ranks
+        input_samples = None
+        split_input_data = None
+        split_send_counts = None
+        split_displacements = None
+
+    # Broadcast the arrays to all of the ranks
+    split_send_counts = comm.bcast(split_send_counts, root=0)
+    split_displacements = comm.bcast(split_displacements, root=0)
+
+    # create arrays to store this ranks's subset of the data
+    this_rank_input_samples = np.zeros(split_send_counts[rank])
+    this_rank_output_samples = np.zeros(split_send_counts[rank])
+
+    # Scatter the data to all of the CPUs
+    comm.Scatterv([input_samples, tuple(split_send_counts),
+                   tuple(split_displacements), MPI.DOUBLE],
+                  this_rank_input_samples, root=0)
+    '''
+
+    local_start_mc = timeit.default_timer()
+
+    local_sample_outputs = []
+    for sample in input_samples:
+        local_sample_outputs.append(model.evaluate(sample))
+    local_sample_outputs = np.array(local_sample_outputs)
+
+    local_total_cost = np.array([timeit.default_timer() - local_start_mc])
+
+    if rank == 0:
+        shape = list(local_sample_outputs.shape)
+        shape[0] = num_samples
+        m = 1
+        for s in shape[1:]:
+            m *= s
+        output_samples_mc = np.zeros(shape=shape)
+        cpu_to_num_samples *= m
+        split_displacements *= m
+    else:
+        output_samples_mc = None
+
+    comm.Gatherv(
+        local_sample_outputs,
+        [output_samples_mc, tuple(cpu_to_num_samples), tuple(split_displacements), MPI.DOUBLE],
+        root=0
+    )
+
+    par_mc_max_cost = np.zeros(1)
+    par_mc_min_cost = np.zeros(1)
+    par_mc_sum_cost = np.zeros(1)
+    comm.Reduce(local_total_cost, par_mc_max_cost, op=MPI.MAX, root=0)
+    comm.Reduce(local_total_cost, par_mc_min_cost, op=MPI.MIN, root=0)
+    comm.Reduce(local_total_cost, par_mc_sum_cost, op=MPI.SUM, root=0)
+
+    if rank == 0:
+        print("\nSUMMARY OF PARALLEL MONTE CARLO:")
+        par_mean_mc = np.mean(output_samples_mc, axis=0)
+        par_mc_total_time = timeit.default_timer() - start_time
+        print("Mean of the Monte Carlo output samples: ", par_mean_mc)
+        par_precision_mc = np.var(output_samples_mc, axis=0) / num_samples
+        print("Target precision: ", par_precision_mc)
+
+        print("Max single-cpu computation time: ", par_mc_max_cost[0])
+        print("Min single-cpu computation time: ", par_mc_min_cost[0])
+        print("Avg single-cpu computation time: ", par_mc_sum_cost[0] / num_cpus)
+        print("Total Parallel MC time: ", par_mc_total_time)
+    else:
+        par_mean_mc = None
+        par_precision_mc = None
+
+    mean_mc = comm.bcast(par_mean_mc, root=0)
+    precision_mc = comm.bcast(par_precision_mc, root=0)
+    return mean_mc, precision_mc
 
 
 def test_old_or_new_mlmc(use_original_mlmc, data_distribution, models, precision_mc, comm):
@@ -240,7 +264,6 @@ if __name__ == '__main__':
 
     model_type = args.model
     if model_type == 'spring_mass':
-        num_samples = 5000  # for Monte Carlo only
         low_timestep = 1.0
         mid_timestep = 0.1
         high_timestep = 0.01  # used by Monte Carlo
@@ -258,12 +281,14 @@ if __name__ == '__main__':
             random_seed=1
         )
 
+        serial_mc_model = SpringMassModel(mass=1.5, time_step=high_timestep)
+
         # Initialize spring-mass models for MLMC. Here using three levels
         # with MLMC defined by different time steps
         models = [SpringMassModel(mass=1.5, time_step=low_timestep),
                   SpringMassModel(mass=1.5, time_step=mid_timestep),
                   SpringMassModel(mass=1.5, time_step=high_timestep)]
-        precision_mc = 0.0017089012209586753
+        # precision_mc = 0.0017089012209586753
 
     elif model_type == 'projectile':
         from examples.projectile.projectile import Projectile
@@ -279,6 +304,8 @@ if __name__ == '__main__':
                 pass
 
 
+        serial_mc_model = Projectile(10000)
+
         models = [
             Projectile(10000),
             Projectile(100000),
@@ -287,10 +314,17 @@ if __name__ == '__main__':
         ]
 
         distribution = ProjectileRandomInput()
-        precision_mc = 0.0017089012209586753
+        # precision_mc = 0.0017089012209586753
 
     else:
         raise ValueError(f"unrecognized model type: {model_type}")
+
+    serial_mc_num_samples = 1000
+    np.random.seed(1)
+    mean_mc, precision_mc = test_serial_monte_carlo(
+        data_distribution=distribution, model=serial_mc_model, num_samples=serial_mc_num_samples, comm=comm
+    )
+    print(f'target precision_mc: {precision_mc}')
 
     np.random.seed(1)
     original_setup_max_time, original_sim_max_time = test_old_or_new_mlmc(

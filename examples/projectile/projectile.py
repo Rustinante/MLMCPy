@@ -1,3 +1,8 @@
+"""
+The basis for this Projectile model is found here:
+C. Hill, “Reaching Orbit.” (Oct., 2018).
+https://scipython.com/blog/reaching-orbit/
+"""
 import numpy as np
 from scipy.constants import G
 from MLMCPy.model import Model
@@ -93,7 +98,8 @@ if __name__ == '__main__':
     n_rows, n_cols = 4, 4
     fig, axes = plt.subplots(nrows=n_rows, ncols=n_cols)
     num_samples = n_rows * n_cols
-    samples = np.tile(np.array([200, 2.92, 30]), (num_samples, 1)) + np.random.uniform(low=-1, high=1, size=(num_samples, 3)) * np.array([[0.1, 0.5, 1]])
+    samples = np.tile(np.array([200, 2.92, 30]), (num_samples, 1)) + np.random.uniform(low=-1, high=1, size=(
+    num_samples, 3)) * np.array([[0.1, 0.5, 1]])
     for i, (h, launch_speed, launch_angle) in enumerate(samples):
         # for i, launch_speed in enumerate([3, 6.5, 7.7, 8]):
         tr = Projectile.get_trajectory(h, launch_speed, launch_angle, num_time_steps=100000)

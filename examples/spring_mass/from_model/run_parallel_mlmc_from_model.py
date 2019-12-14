@@ -244,7 +244,7 @@ def test_old_or_new_mlmc(use_original_mlmc, data_distribution, models, precision
             print(f"Min single-cpu {label} time: ", new_mlmc_min_cost[0])
             print(f"Avg single-cpu {label} time: ", new_mlmc_sum_cost[0] / size)
 
-        return new_mlmc_max_cost
+        return new_mlmc_max_cost[0]
 
     setup_max_time = print_time_stats(setup_time, "setup")
     sim_max_time = print_time_stats(total_sim_time_local, "simulation")
@@ -287,7 +287,6 @@ if __name__ == '__main__':
         models = [SpringMassModel(mass=1.5, time_step=low_timestep),
                   SpringMassModel(mass=1.5, time_step=mid_timestep),
                   SpringMassModel(mass=1.5, time_step=high_timestep)]
-        # precision_mc = 0.0017089012209586753
 
     elif model_type == 'projectile':
         from examples.projectile.projectile import Projectile
@@ -297,8 +296,7 @@ if __name__ == '__main__':
             def draw_samples(self, num_samples):
                 # height, launch_speed, launch_angle
                 return np.tile(np.array([200, 2.92, 30]), (num_samples, 1)) \
-                        + np.random.normal(size=(num_samples, 3)) * np.array([[0.001, 0.001, 0.05]])
-                       # + np.random.uniform(low=-1, high=1, size=(num_samples, 3)) * np.array([[0.001, 0.001, 0.05]])
+                       + np.random.normal(size=(num_samples, 3)) * np.array([[0.001, 0.001, 0.05]])
 
             def reset_sampling(self):
                 pass
@@ -314,7 +312,6 @@ if __name__ == '__main__':
         ]
 
         distribution = ProjectileRandomInput()
-        # precision_mc = 0.0017089012209586753
 
     else:
         raise ValueError(f"unrecognized model type: {model_type}")
@@ -348,29 +345,18 @@ if __name__ == '__main__':
         comm=comm
     )
     comm.Barrier()
-    #####################################################
-    # Step 6: Final speedup comparisons
-    # Display the overall speedup results from all runs
+
     if comm.Get_rank() == 0:
         print("\n################# SPEEDUP SUMMARY ###################")
+        original_total_time = original_setup_max_time + original_sim_max_time
+        new_total_time = new_setup_max_time + new_sim_max_time
 
-        #    print "Serial MC vs. Parallel MC Total speedup: ", \
-        #                ser_mc_total_cost / par_mc_total_cost
-        #    print "Serial MC vs. Parallel MC Computational speedup: ", \
-        #                ser_mc_computational_cost / par_mc_max_cost[0]
-        #    print
-        #    print "Parallel MC vs. Original MLMC Total Speedup: ", \
-        #                par_mc_total_cost / orig_mlmc_total_cost
-        #    print "Parallel MC vs. Original MLMC Computational Speedup: ", \
-        #                par_mc_max_cost[0] / orig_mlmc_max_cost[0]
-        #    print
-        #    print "Parallel MC vs. NEW MLMC Total Speedup: ", \
-        #                par_mc_total_cost / NEW_mlmc_total_cost
-        #    print "Parallel MC vs. NEW MLMC Computational Speedup: ", \
-        #                par_mc_max_cost[0] / NEW_mlmc_max_cost[0]
-        #    print
+        total_speedup = original_total_time / new_total_time
+        sim_speedup = original_sim_max_time / new_sim_max_time
+        setup_speedup = original_setup_max_time / new_setup_max_time
 
         print("Original MLMC vs. NEW MLMC Total Speedup: ",
               (original_setup_max_time + original_sim_max_time) / (new_setup_max_time + new_sim_max_time)
               )
-        print("Original MLMC vs. NEW MLMC Computational Speedup: ", original_sim_max_time / new_sim_max_time)
+        print("Original MLMC vs. NEW MLMC Computational Speedup: ", sim_speedup)
+        print("Original MLMC vs. NEW MLMC Setup Speedup: ", original_setup_max_time / new_setup_max_time)

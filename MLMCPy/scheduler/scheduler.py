@@ -1,15 +1,6 @@
 import numpy as np
 
 
-def get_job_allocation(job_counts, costs, num_workers):
-    """
-    :param job_counts: the number of times each simulation model should be run.
-    :param costs: the estimated time each model takes per run, assumed to be in increasing order.
-    :param int num_workers: number of workers to run the simulations.
-    """
-    assert len(job_counts) == len(costs)
-
-
 def get_job_allocation_heuristically(job_counts, costs, num_workers):
     """
     :param job_counts: the number of times each simulation model should be run.

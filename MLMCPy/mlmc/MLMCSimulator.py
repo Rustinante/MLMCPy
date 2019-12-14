@@ -414,8 +414,9 @@ class MLMCSimulator:
 
                         level_outputs[lvl_out_start:lvl_out_end] = all_outputs_flattened[all_out_start:all_out_end]
 
-                    estimates += np.sum(level_outputs, axis=0) / num_samples_per_level[level]
-                    variances += np.var(level_outputs, axis=0) / num_samples_per_level[level]
+                    if num_samples_per_level[level]:
+                        estimates += np.sum(level_outputs, axis=0) / num_samples_per_level[level]
+                        variances += np.var(level_outputs, axis=0) / num_samples_per_level[level]
 
             end_unpack = timeit.default_timer() - start_unpack
             if self.cpu_rank == 0:
